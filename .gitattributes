@@ -1,0 +1,5 @@
+# The co-op patch must reach git apply byte for byte (no line-ending conversion).
+patches/*.patch -text
+# Windows scripts keep Windows line endings.
+*.bat text eol=crlf
+*.ps1 text eol=crlf

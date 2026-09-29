@@ -1,0 +1,8 @@
+# Fetched and built at home, never committed.
+/WinFish/
+/PvZ-Portable/
+/build-*/
+/deps/
+/dist/
+/Built Game/
+.DS_Store

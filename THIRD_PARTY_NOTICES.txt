@@ -1,0 +1,21 @@
+Insaniquarium Co-op includes or links the following third-party software.
+
+* SDL 2 (SDL2.dll) - zlib license - https://libsdl.org
+* SDL-Mixer-X (static) - zlib license - https://github.com/WohlSoft/SDL-Mixer-X
+* libopenmpt (static) - BSD 3-Clause - https://lib.openmpt.org
+* libogg / libvorbis (static) - BSD 3-Clause - https://xiph.org
+* stb_vorbis, dr_mp3 (inside SDL-Mixer-X) - public domain / MIT-0
+* zlib (static) - zlib license - https://zlib.net
+* libpng (static) - PNG Reference Library License v2 - http://www.libpng.org
+* libjpeg-turbo (static) - IJG + BSD 3-Clause - https://libjpeg-turbo.org
+* miniupnpc (static) - BSD 3-Clause - https://miniupnp.tuxfamily.org
+* LLVM libc++ / compiler-rt (static, via llvm-mingw) - Apache-2.0 WITH LLVM-exception
+* PvZ-Portable SexyAppFramework - LGPL-3.0-or-later and the PopCap Games
+  Framework License - https://github.com/wszqkzqk/PvZ-Portable
+  (the complete, modified framework source is included in the mod's source
+  distribution, as the LGPL requires)
+* WinFish decompilation - https://github.com/Vindirect/WinFish
+* insaniquarium-mac port (build and port work) - MIT - https://github.com/Jake-Vellora/insaniquarium-mac
+
+Insaniquarium! Deluxe and its assets are (c) PopCap Games / Electronic Arts.
+This mod does not include any game assets; each player uses their own copy.

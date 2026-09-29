@@ -1,0 +1,1198 @@
+diff --git a/WinFish/source/WinFish/Alien.cpp b/WinFish/source/WinFish/Alien.cpp
+index 79cb97b..b441036 100644
+--- a/WinFish/source/WinFish/Alien.cpp
++++ b/WinFish/source/WinFish/Alien.cpp
+@@ -10,6 +10,10 @@
+ #include "Shadow.h"
+ #include "Warp.h"
+ #include "Res.h"
++#include "CoopGame.h"
++#include "Coin.h"
++#include "CoopRace.h"
++#include "CoopKeeper.h"
+ 
+ 
+ Sexy::Alien::Alien()
+@@ -133,6 +137,7 @@ Sexy::Alien::Alien(int theX, int theY, int theAlienType)
+ 		mMissleReloadTime = 144;
+ 	}
+ 
++	mHealth *= Coop::AlienHealthMult();	// co-op: tougher aliens for two shooters
+ 	mMaxHealth = mHealth;
+ 	m0x1d4 = 40;
+ 	mMovementChangeTimer = 20;
+@@ -292,8 +297,9 @@ void Sexy::Alien::Update()
+ 			mVX = 0.1;
+ 	}
+ 
+-	mXD += mVX / mSpeedMod + local8;
+-	mYD += mVY / mSpeedMod;
++	double aKeeperSpeed = Coop::KeeperAlienSpeed(this);	// Alien Keeper frenzy
++	mXD += mVX / mSpeedMod * aKeeperSpeed + local8;
++	mYD += mVY / mSpeedMod * aKeeperSpeed;
+ 
+ 	if (mHitFlashTimer > 0)
+ 		mHitFlashTimer--;
+@@ -526,6 +532,11 @@ bool Sexy::Alien::Shot(int x, int y)
+ {
+ 	if (x <= mXD || x >= mXD + 160.0 || y <= mYD || y >= mYD + 160.0 || mHitFlashTimer > 0)
+ 		return false;
++	if (Coop::KeeperAlienShielded(this))	// Alien Keeper shield: the laser bounces off
++	{
++		mApp->mBoard->PlaySample(SOUND_RICOCHET_ID, 3, 1.0);
++		return true;
++	}
+ 
+ 	if (mAlienType == ALIEN_PSYCHOSQUID && mIsPsychosquidHealing)
+ 	{
+@@ -821,6 +832,7 @@ Sexy::GameObject* Sexy::Alien::FindNearestFood()
+ 	if (!mApp->CanAlienChaseAnyFish() || (mAlienType == ALIEN_GUS && mChaseTargetDelay > 0))
+ 		return aRet;
+ 
++	Coop::KeeperHuntPoint(aCX, aCY);	// Alien Keeper: hunt the fish nearest the keeper's cursor
+ 	for (GameObjectSet::iterator it = mApp->mBoard->mGameObjectSet.begin(); it != mApp->mBoard->mGameObjectSet.end(); ++it)
+ 	{
+ 		GameObject* anObj = *it;
+@@ -1004,6 +1016,7 @@ void Sexy::Alien::CheckCollision()
+ 				int ay = aCY - (anObj->mHeight / 2 + anObj->mY);
+ 				if (ax > -aXEatDistObj && ax < aXEatDistObj && ay > -aYEatDistObj && ay < aYEatDistObj)
+ 				{
++					Coop::KeeperAlienAte(anObj);	// Alien Keeper bounty
+ 					OnFoodAte(anObj);
+ 					anObj->Remove();
+ 					return;
+@@ -1046,7 +1059,7 @@ void Sexy::Alien::DrawAlien(Graphics* g, bool mirror)
+ 		{
+ 			shouldMirror = mirror;
+ 			aSrcRect.mY = 2;
+-			aSrcRect.mX = mHitFlashTimer; // TODO Fix This Causes debug assert (must me < 10)
++			aSrcRect.mX = mHitFlashTimer < 10 ? mHitFlashTimer : 9;	// the strip has 10 frames; frame 10 hung the renderer
+ 		}
+ 		break;
+ 	case ALIEN_DESTRUCTOR:
+@@ -1269,10 +1282,16 @@ void Sexy::Alien::UpdateAnimations()
+ 
+ void Sexy::Alien::Remove(bool removeShadow)
+ {
++	Coop::RaceOnAlienRemoved(this);
+ 	if (mMisslePtr)
+ 		mMisslePtr->Remove();
+ 	if (mApp->mBoard->mCyraxPtr == nullptr && removeShadow && CanDropCoin())
++	{
+ 		mApp->mBoard->DropCoin(mX + 25, mY + 25, 4, nullptr, -1.0, 0);
++		// Coin Rivals: the treasure belongs to whoever landed the last shot.
++		if (Coop::RivalsActive() && !mApp->mBoard->mCoinList->empty())
++			mApp->mBoard->mCoinList->back()->mCoopOwner = mCoopOwner;
++	}
+ 
+ 	mApp->mBoard->mWidgetManager->RemoveWidget(this);
+ 	mApp->SafeDeleteWidget(this);
+diff --git a/WinFish/source/WinFish/BilaterusHead.cpp b/WinFish/source/WinFish/BilaterusHead.cpp
+index b3e84fe..d1195dd 100644
+--- a/WinFish/source/WinFish/BilaterusHead.cpp
++++ b/WinFish/source/WinFish/BilaterusHead.cpp
+@@ -7,6 +7,7 @@
+ #include "Fish.h"
+ #include "Shadow.h"
+ #include "Res.h"
++#include "CoopGame.h"
+ 
+ using namespace Sexy;
+ 
+@@ -420,7 +421,7 @@ bool Sexy::BilaterusHead::TakeHit(int theX, int theY)
+ 		else if (theY > mYD + 50.0)
+ 			mVY = m0x198 * -4.0;
+ 
+-		m0x1d8 -= mApp->mBoard->m0x3e4 * 2 + 2;
++		m0x1d8 -= (mApp->mBoard->m0x3e4 * 2 + 2) / Coop::AlienHealthMult();	// co-op: tougher heads
+ 		mApp->mBoard->PlaySample(SOUND_HIT_ID, 3, 1.0);
+ 		m0x1d0 = 10;
+ 		if (m0x1d8 <= 0.0)
+diff --git a/WinFish/source/WinFish/Board.cpp b/WinFish/source/WinFish/Board.cpp
+index 71766b0..cb705a7 100644
+--- a/WinFish/source/WinFish/Board.cpp
++++ b/WinFish/source/WinFish/Board.cpp
+@@ -25,6 +25,9 @@
+ #include "MessageWidget.h"
+ #include "SaverBridge.h"
+ #include "Res.h"
++#include "CoopSession.h"
++#include "CoopGame.h"
++#include "CoopRace.h"
+ 
+ #include "Fish.h"
+ #include "Oscar.h"
+@@ -233,6 +236,8 @@ Board::Board(WinFishApp* theApp)
+ 
+ Board::~Board()
+ {
++	Coop::OnBoardDestroyed(this);
++	Coop::RaceOnBoardDestroyed(this);
+ 	if(mMoneyLabel)
+ 		delete mMoneyLabel;
+ 	if (mMenuButton)
+@@ -711,6 +716,7 @@ void Board::Update()
+ 		{
+ 			mShouldSave = false;
+ 			Unk04();
++			Coop::OnTimeUp(this);
+ 			mApp->mHighScoreMgr->RecordTimeTrialHighScore(mTank, mApp->mCurrentProfile, mMoney);
+ 			mApp->DoTimesUpDialog();
+ 			return;
+@@ -807,54 +813,17 @@ void Board::Update()
+ 	if (mApp->mGameMode == GAMEMODE_VIRTUAL_TANK && mApp->mCurrentProfile->mShells == 0 && mGameUpdateCnt == 150) // 286
+ 		ShowText("Here you\'ll be able to build your own custom fish tank!", false, 44);
+ 
+-	if (m0x4ec)
++	// Hold-to-feed / hold-to-fire, once per player (co-op: player 2 has its own).
++	CoopUpdateHolds(0, aLastMX, aLastMY);
++	if (Coop::S().CoopActive())
+ 	{
+-		bool isLeftBtnDown = mWidgetManager->IsLeftButtonDown();
+-		int aVal = Unk01();
+-		int aLastMouseX = mWidgetManager->mLastMouseX;
+-		int aLastMouseY = mWidgetManager->mLastMouseY;
+-		if (!isLeftBtnDown)
+-			m0x4ec = false;
+-		else if ((mGameUpdateCnt % (16 - gFoodLimit) == 0) && (m0x3c0 + 200 < aVal) && 
+-			(aLastMouseX >= 31 && aLastMouseX <= 586) && (aLastMouseY >= 61 && aLastMouseY <= 399) && Buy(m0x4ac, false))
+-		{ // 301
+-			DropFood(aLastMouseX - 10, aLastMouseY - 10, 0, false, 20, -1);
+-		}
+-	}
+-
+-	if (m0x4ed) // 305
+-	{
+-		bool isLeftBtnDown = mWidgetManager->IsLeftButtonDown();
+-		int aVal = Unk01();
+-		if (!isLeftBtnDown)
+-			m0x4ed = false;
+-		else if(m0x3e4 > 11 && mGameUpdateCnt%(11 - m0x3e4 / 2) == 0 && m0x3c4 + 100 < aVal && mWidgetManager->mLastMouseY > 40)
+-		{ // 311
+-			for (int i = 0; i < mBilaterusList->size(); i++)
+-			{
+-				Bilaterus* aBil = mBilaterusList->at(i);
+-				if (aBil->Shoot(aLastMX, aLastMY))
+-					break;
+-			}
+-
+-			for (int i = 0; i < mMissleList1->size(); i++)
+-			{
+-				Missle* aMissle = mMissleList1->at(i);
+-				if (aMissle->Shot(aLastMX, aLastMY))
+-					break;
+-			}
+-
+-			for (int i = 0; i < mAlienList->size(); i++)
+-			{
+-				Alien* anAlien = mAlienList->at(i);
+-				if (anAlien->Shot(aLastMX, aLastMY))
+-					break;
+-			}
+-
+-			SpawnLaserShot(aLastMX - 40, aLastMY - 40);
+-			PlayZapSound();
+-		}
++		int aP2X = 0, aP2Y = 0;
++		bool aP2Down = false;
++		if (Coop::S().GetPlayerPointer(1, aP2X, aP2Y, aP2Down))
++			CoopUpdateHolds(1, aP2X, aP2Y);
+ 	}
++	else
++		mP2HoldFood = mP2HoldFire = false;
+ 
+ 	if (m0x450 > 0)
+ 		m0x450--;
+@@ -1016,9 +985,9 @@ void Board::Update()
+ 			else if (mAlienTimer < 1)
+ 			{
+ 				m0x2c4 = 35;
+-				m0x4ed = false;
+-				m0x4ec = false;
++				CoopReleaseHolds();
+ 				SpawnAlien(mAlienExpect, mCrosshair1X, mCrosshair1Y, true);
++				Coop::MaybeSpawnBonusAlien(this);
+ 				if (mApp->mGameMode == GAMEMODE_CHALLENGE)
+ 				{
+ 					int aDifIncreaseProb = 1;
+@@ -1100,7 +1069,7 @@ void Board::Update()
+ 					RelaxModeConfig();
+ 				}
+ 				m0x45c++;
+-				mAlienTimer = 3000;
++				mAlienTimer = Coop::ScaleAlienDelay(3000);
+ 			}
+ 			else if (mAlienTimer < 275)
+ 			{
+@@ -1120,11 +1089,14 @@ void Board::Update()
+ 	{
+ 		if (!HasAnyFish() && mTank != 5)
+ 		{
++			if (Coop::RaceOnTankLost(this))
++				return;
+ 			PauseGame(true);
+ 			if (!IsFirstLevel())
+ 			{
+ 				mShouldSave = false;
+ 				Unk04();
++				Coop::OnTankLost(this);
+ 				mApp->DoDialogUnkF(DIALOG_GAME_OVER, true, "GAME OVER", "Oops!  All of your fish have died!", "Click to Continue", Dialog::BUTTONS_FOOTER);
+ 			}
+ 			else
+@@ -1188,7 +1160,11 @@ void Board::Draw(Graphics* g)
+ 
+ 	g->SetFont(FONT_JUNGLEFEVER10OUTLINE);
+ 	g->SetColor(Color(0x6e, 0xfa, 0x6e));
+-	if (mMessageShown[2] && mLevel == 1 && mTank == 1 && !mApp->mCurrentProfile->mFinishedGame) // 52
++	if (Coop::RaceOwnsBoard(this))
++	{
++		// No tutorial arrows in a race: they sit under Tank Race's messages.
++	}
++	else if (mMessageShown[2] && mLevel == 1 && mTank == 1 && !mApp->mCurrentProfile->mFinishedGame) // 52
+ 	{
+ 		g->DrawImage(IMAGE_HELPARROW, 40, 70);
+ 		g->DrawString("Click here to", 65, 95);
+@@ -1240,7 +1216,11 @@ void Board::Draw(Graphics* g)
+ 		aTextColor = Color(0xa5, 0x8c, 0x50);
+ 	g->SetColor(aTextColor);
+ 
+-	if (!mApp->mRelaxMode)
++	if (Coop::RaceOwnsBoard(this))
++	{
++		// Tank Race / Alien Keeper: their bars sit there.
++	}
++	else if (!mApp->mRelaxMode)
+ 	{
+ 		if (mApp->mGameMode == GAMEMODE_CHALLENGE)
+ 			g->DrawString("Challenge", 15, 470);
+@@ -1466,8 +1446,78 @@ void Sexy::Board::KeyChar(SexyChar theChar)
+ 		mApp->DoLostFocusDialog();
+ }
+ 
++// Insaniquarium Co-op: the original hold-to-feed and hold-to-fire logic,
++// parameterized by player. Player 1 reads the live pointer, player 2 its own.
++void Sexy::Board::CoopUpdateHolds(int thePlayer, int theFireX, int theFireY)
++{
++	Coop::RivalsScope aWallet(thePlayer);	// Coin Rivals: holding feeds/fires from your own wallet
++	int aMouseX = 0, aMouseY = 0;
++	bool isLeftBtnDown = false;
++	if (thePlayer == 0)
++	{
++		isLeftBtnDown = mWidgetManager->IsLeftButtonDown();
++		aMouseX = mWidgetManager->mLastMouseX;
++		aMouseY = mWidgetManager->mLastMouseY;
++	}
++	else if (!Coop::S().GetPlayerPointer(1, aMouseX, aMouseY, isLeftBtnDown))
++		isLeftBtnDown = false;
++
++	if (CoopHoldFood(thePlayer))
++	{
++		int aVal = Unk01();
++		if (!isLeftBtnDown)
++			CoopHoldFood(thePlayer) = false;
++		else if ((mGameUpdateCnt % (16 - gFoodLimit) == 0) && (CoopFoodTime(thePlayer) + 200 < aVal) &&
++			(aMouseX >= 31 && aMouseX <= 586) && (aMouseY >= 61 && aMouseY <= 399) && Buy(m0x4ac, false))
++		{
++			DropFood(aMouseX - 10, aMouseY - 10, 0, false, 20, -1);
++			Coop::S().Stats(thePlayer).mFoodDropped++;
++		}
++	}
++
++	if (CoopHoldFire(thePlayer))
++	{
++		int aVal = Unk01();
++		if (!isLeftBtnDown)
++			CoopHoldFire(thePlayer) = false;
++		else if(m0x3e4 > 11 && mGameUpdateCnt%(11 - m0x3e4 / 2) == 0 && CoopFireTime(thePlayer) + 100 < aVal && aMouseY > 40)
++		{
++			for (int i = 0; i < mBilaterusList->size(); i++)
++			{
++				Bilaterus* aBil = mBilaterusList->at(i);
++				if (aBil->Shoot(theFireX, theFireY))
++					break;
++			}
++
++			for (int i = 0; i < mMissleList1->size(); i++)
++			{
++				Missle* aMissle = mMissleList1->at(i);
++				if (aMissle->Shot(theFireX, theFireY))
++					break;
++			}
++
++			for (int i = 0; i < mAlienList->size(); i++)
++			{
++				Alien* anAlien = mAlienList->at(i);
++				if (anAlien->Shot(theFireX, theFireY))
++				{
++					Coop::S().Stats(thePlayer).mAlienHits++;
++					Coop::RivalsOnAlienShot(anAlien, thePlayer);
++					break;
++				}
++			}
++
++			Coop::S().Stats(thePlayer).mShots++;
++			SpawnLaserShot(theFireX - 40, theFireY - 40);
++			PlayZapSound();
++		}
++	}
++}
++
+ void Board::KeyDown(KeyCode theKey)
+ {
++	if (Coop::RaceKeyDown((int)theKey))
++		return;
+ 	if (!mApp->mDebugKeysEnabled)
+ 		for (int i = 0; i < SDL_arraysize(mCheatCodes); i++)
+ 			if (mCheatCodes[i]->CheckCodeActivated(theKey))
+@@ -1478,6 +1528,14 @@ void Board::MouseDown(int x, int y, int theClickCount)
+ {
+ 	Widget::MouseDown(x, y, theClickCount);
+ 
++	const int aPlayer = Coop::S().CurrentPlayer();
++	// Co-op: middle-click drops a "look here!" ping both players can see.
++	if (theClickCount == 3 && Coop::S().GetRole() != Coop::ROLE_NONE)
++	{
++		Coop::S().AddMarker(aPlayer, x, y);
++		return;
++	}
++
+ 	if (mIsBonusRound)
+ 	{
+ 		if (theClickCount > -1)
+@@ -1533,8 +1591,8 @@ void Board::MouseDown(int x, int y, int theClickCount)
+ 			}
+ 			playZapSound = true;
+ 			SpawnLaserShot(x - 40, y - 40);
+-			m0x4ed = true;
+-			m0x3c4 = Unk01();
++			CoopHoldFire(aPlayer) = true;
++			CoopFireTime(aPlayer) = Unk01();
+ 		}
+ 
+ 		if (aliensExist)
+@@ -1547,8 +1605,8 @@ void Board::MouseDown(int x, int y, int theClickCount)
+ 					if (mAlienList->at(0)->FoodDroppedAtAlien(x, y))
+ 						aEatDelay = 20;
+ 					DropFood(x - 10, y - 10, 0, false, aEatDelay, -1);
+-					m0x4ec = true;
+-					m0x3c0 = Unk01();
++					CoopHoldFood(aPlayer) = true;
++					CoopFoodTime(aPlayer) = Unk01();
+ 				}
+ 			}
+ 			else
+@@ -1558,7 +1616,12 @@ void Board::MouseDown(int x, int y, int theClickCount)
+ 					for (int i = 0; i < mAlienList->size(); ++i)
+ 					{
+ 						Alien* anAlien = mAlienList->at(i);
+-						if (anAlien->Shot(x, y)) break;
++						if (anAlien->Shot(x, y))
++						{
++							Coop::S().Stats(aPlayer).mAlienHits++;
++							Coop::RivalsOnAlienShot(anAlien, aPlayer);
++							break;
++						}
+ 					}
+ 					for (int i = 0; i < mMissleList1->size(); ++i)
+ 					{
+@@ -1567,8 +1630,9 @@ void Board::MouseDown(int x, int y, int theClickCount)
+ 					}
+ 
+ 					SpawnLaserShot(x - 40, y - 40);
+-					m0x4ed = true;
+-					m0x3c4 = Unk01();
++					Coop::S().Stats(aPlayer).mShots++;
++					CoopHoldFire(aPlayer) = true;
++					CoopFireTime(aPlayer) = Unk01();
+ 					PlayZapSound();
+ 					return;
+ 				}
+@@ -1586,8 +1650,8 @@ void Board::MouseDown(int x, int y, int theClickCount)
+ 			}
+ 
+ 			SpawnLaserShot(x - 40, y - 40);
+-			m0x4ed = true;
+-			m0x3c4 = Unk01();
++			CoopHoldFire(aPlayer) = true;
++			CoopFireTime(aPlayer) = Unk01();
+ 			playZapSound = true;
+ 		}
+ 		else
+@@ -1599,8 +1663,9 @@ void Board::MouseDown(int x, int y, int theClickCount)
+ 				if (m0x440 || Buy(m0x4ac, true))
+ 				{
+ 					DropFood(x - 10, y - 10, 0, false, 0, -1);
+-					m0x4ec = true;
+-					m0x3c0 = Unk01();
++					Coop::S().Stats(aPlayer).mFoodDropped++;
++					CoopHoldFood(aPlayer) = true;
++					CoopFoodTime(aPlayer) = Unk01();
+ 				}
+ 			}
+ 		}
+@@ -1613,8 +1678,9 @@ void Board::MouseDown(int x, int y, int theClickCount)
+ void Board::MouseUp(int x, int y, int theClickCount)
+ {
+ 	Widget::MouseUp(x, y, theClickCount);
+-	m0x4ec = false;
+-	m0x4ed = false;
++	const int aPlayer = Coop::S().CurrentPlayer();
++	CoopHoldFood(aPlayer) = false;
++	CoopHoldFire(aPlayer) = false;
+ }
+ 
+ void Sexy::Board::ButtonPress(int theId)
+@@ -1715,6 +1781,8 @@ void Sexy::Board::SpawnRandomBubble()
+ 
+ void Board::AddGameObject(GameObject* theObject)
+ {
++	if (Coop::RivalsActive())
++		theObject->mCoopOwner = Coop::RivalsSpawnOwner();
+ 	bool someFlag = true;
+ 	switch (theObject->mType)
+ 	{
+@@ -2157,8 +2225,7 @@ void Sexy::Board::PauseGame(bool shouldPause)
+ 		}
+ 		else
+ 		{
+-			m0x4ec = false;
+-			m0x4ed = false;
++			CoopReleaseHolds();
+ 			UpdateMoneyLabelText();
+ 			WidgetSetupVT();
+ 			Unk13();
+@@ -2184,7 +2251,7 @@ void Sexy::Board::StartGame()
+ 	}
+ 	UserProfile* aCurProf = mApp->mCurrentProfile;
+ 	if ((!aCurProf->mFinishedGame || (mApp->mGameMode != GAMEMODE_TIME_TRIAL &&
+-		mApp->mGameMode != GAMEMODE_CHALLENGE)) && aCurProf->mNumOfUnlockedPets < 4)
++		mApp->mGameMode != GAMEMODE_CHALLENGE)) && Coop::RaceStagePetCount(aCurProf->mNumOfUnlockedPets) < 4)
+ 	{
+ 		for (int i = PET_STINKY; i < PET_PRESTO; i++)
+ 			if (aCurProf->IsPetUnlocked(i))
+@@ -2301,6 +2368,10 @@ void Sexy::Board::StartGame()
+ 
+ void Sexy::Board::SaveCurrentGame()
+ {
++	// Tank Race tanks are throwaway: never save them, and never touch the
++	// player's real Adventure save.
++	if (Coop::RaceOwnsBoard(this))
++		return;
+ 	SexyString aFileStr = mApp->mCurrentProfile->GetSaveGameFilePath(mApp->mGameMode, mApp->mCurrentProfile->mId);
+ 
+ 	if (!(mApp->mBoard->mShouldSave && mApp->mGameMode != GAMEMODE_SANDBOX))
+@@ -2702,6 +2773,7 @@ void Sexy::Board::InitLevel()
+ 	{
+ 		mTank = mApp->mCurrentProfile->mTank;
+ 		mLevel = mApp->mCurrentProfile->mLevel;
++		Coop::RaceOverrideLevel(mTank, mLevel);	// Tank Race: the host's pick, not the save's
+ 	}
+ 	else
+ 	{
+@@ -2761,6 +2833,8 @@ void Sexy::Board::InitLevel()
+ 	UpdateMoneyLabelText();
+ 	memset(mMessageShown, 0, 54);
+ 	DeterminePricesAndSlots();
++	Coop::ApplyLevelPrices(this);
++	Coop::OnLevelStarted(this);
+ 	m0x2dc = 0;
+ 	m0x2e0 = 0;
+ 	for (int i = 0; i < SLOT_END; i++)
+@@ -2896,6 +2970,12 @@ void Sexy::Board::Unk03()
+ 
+ void Sexy::Board::Unk04()
+ {
++	if (Coop::RivalsActive())
++	{
++		// Coin Rivals: each player's coins still on their way land in their own wallet.
++		Coop::RivalsFlushInFlight(this);
++		return;
++	}
+ 	int something = Unk10();
+ 	mMoney += something;
+ 	if (mMoney < 0)
+@@ -3082,21 +3162,21 @@ int Sexy::Board::Unk10()
+ 	for (int i = 0; i < mCoinList->size(); i++)
+ 	{
+ 		Coin* aCoin = mCoinList->at(i);
+-		if (aCoin->m0x198)
++		if (aCoin->m0x198 && Coop::RivalsCountsInFlight(aCoin))
+ 			aValue += aCoin->GetValue();
+ 	}
+ 
+ 	for (int i = 0; i < mNikoPearlCoinList->size(); i++)
+ 	{
+ 		Coin* aCoin = mNikoPearlCoinList->at(i);
+-		if (aCoin->m0x198)
++		if (aCoin->m0x198 && Coop::RivalsCountsInFlight(aCoin))
+ 			aValue += aCoin->GetValue();
+ 	}
+ 
+ 	for (int i = 0; i < mLarvaList->size(); i++)
+ 	{
+ 		Larva* aLarva = mLarvaList->at(i);
+-		if (aLarva->mPickedUp)
++		if (aLarva->mPickedUp && Coop::RivalsCountsInFlight(aLarva))
+ 			aValue += aLarva->GetValue();
+ 	}
+ 	return aValue;
+@@ -3123,8 +3203,7 @@ void Sexy::Board::Unk12()
+ {
+ 	if (mMissleList1->empty() && mAlienList->empty() && mBilaterusList->empty())
+ 	{
+-		m0x4ed = false;
+-		m0x4ec = false;
++		CoopReleaseHolds();
+ 		mDropFoodDelay = 36;
+ 		if (mCyraxPtr == nullptr)
+ 			mApp->SomeMusicPlayFunc(true);
+@@ -3391,9 +3470,13 @@ void Sexy::Board::HandleBuyEgg()
+ 	if (m0x43c < 4)
+ 		return;
+ 
++	if (Coop::RaceOnEggComplete(this))
++		return;
++
+ 	m0x3fc = Unk02();
+ 	mShouldSave = false;
+ 	Unk04();
++	Coop::OnLevelWon(this);
+ 
+ 	if (mApp->mGameMode == GAMEMODE_CHALLENGE)
+ 	{
+@@ -4510,7 +4593,7 @@ void Sexy::Board::WidgetSetupVT()
+ 	}
+ 
+ 	if (mMenuButtons[SLOT_ULTRA])
+-		mMenuButtons[SLOT_ULTRA]->SetVisible(mApp->mCurrentProfile->mNumOfUnlockedPets > 0);
++		mMenuButtons[SLOT_ULTRA]->SetVisible(Coop::RaceStagePetCount(mApp->mCurrentProfile->mNumOfUnlockedPets) > 0);
+ 
+ 	if (mApp->IsScreenSaver())
+ 	{
+@@ -4945,6 +5028,7 @@ void Sexy::Board::UpdateMoneyLabelText()
+ 
+ bool Sexy::Board::Buy(int theCost, bool playBuzzer)
+ {
++	theCost = Coop::RaceAdjustCost(this, theCost);	// Tank Race price hike
+ 	if (mApp->mGameMode == GAMEMODE_VIRTUAL_TANK)
+ 		return true;
+ 
+@@ -4956,6 +5040,7 @@ bool Sexy::Board::Buy(int theCost, bool playBuzzer)
+ 		int aVal = Unk10();
+ 		if (mMoney + aVal < theCost)
+ 		{
++			Coop::RivalsBuyFailed();
+ 			if (playBuzzer)
+ 			{
+ 				PlaySample(SOUND_BUZZER_ID, 3, 1.0);
+@@ -4986,8 +5071,8 @@ void Sexy::Board::DropFood(int theX, int theY, int unk1, bool unk2, int theFoodC
+ 		int aCnt = 0;
+ 		for (int i = 0; i < mFoodList->size(); i++)
+ 		{
+-			if (mFoodList->at(i)->m0x18c == 0 && mFoodList->at(i)->mExoticFoodType != 0)
+-				aCnt++;
++			if ((mFoodList->at(i)->m0x18c == 0 && mFoodList->at(i)->mExoticFoodType != 0) || mFoodList->at(i)->mCoopPoison)
++				aCnt++;	// (a rival's poison doesn't use up your food limit)
+ 		}
+ 		if (gFoodLimit + aCnt <= mFoodList->size())
+ 		{
+diff --git a/WinFish/source/WinFish/Board.h b/WinFish/source/WinFish/Board.h
+index 23d5b46..cd8e49a 100644
+--- a/WinFish/source/WinFish/Board.h
++++ b/WinFish/source/WinFish/Board.h
+@@ -236,6 +236,19 @@ namespace Sexy
+ 		bool								mAlwaysShowWhenHungry;
+ 		bool								m0x500;
+ 
++		// Insaniquarium Co-op: player 2's own hold-to-feed / hold-to-fire state
++		// (player 1 keeps using the original fields).
++		bool								mP2HoldFood = false;
++		bool								mP2HoldFire = false;
++		int									mP2FoodTime = 0;
++		int									mP2FireTime = 0;
++		bool&								CoopHoldFood(int thePlayer) { return thePlayer ? mP2HoldFood : m0x4ec; }
++		bool&								CoopHoldFire(int thePlayer) { return thePlayer ? mP2HoldFire : m0x4ed; }
++		int&								CoopFoodTime(int thePlayer) { return thePlayer ? mP2FoodTime : m0x3c0; }
++		int&								CoopFireTime(int thePlayer) { return thePlayer ? mP2FireTime : m0x3c4; }
++		void								CoopUpdateHolds(int thePlayer, int theFireX, int theFireY);
++		void								CoopReleaseHolds() { m0x4ec = m0x4ed = mP2HoldFood = mP2HoldFire = false; }
++
+ 	public:
+ 		Board(WinFishApp* theApp);
+ 		~Board();
+diff --git a/WinFish/source/WinFish/Breeder.cpp b/WinFish/source/WinFish/Breeder.cpp
+index 80b79cc..fc29b57 100644
+--- a/WinFish/source/WinFish/Breeder.cpp
++++ b/WinFish/source/WinFish/Breeder.cpp
+@@ -530,6 +530,14 @@ void Sexy::Breeder::SetPosition(double newX, double newY)
+ 
+ void Sexy::Breeder::OnFoodAte(Food* theFood)
+ {
++	if (theFood->mCoopPoison)	// Tank Race poison raid
++	{
++		mApp->mBoard->PlaySample(SOUND_EXPLODE_ID, 3, 1.0);
++		for (int i = mApp->mSeed->Next() % 3 + 2; i > 0; i--)
++			mApp->mBoard->SpawnShot(mApp->mSeed->Next() % 30 - 10 + mX, mApp->mSeed->Next() % 30 - 10 + mY, mApp->mSeed->Next() % 3 + 3);
++		Die(true);
++		return;
++	}
+ 	bool hungry = IsHungryVisible();
+ 	Unk02(false);
+ 	bool flag = true;
+diff --git a/WinFish/source/WinFish/Coin.cpp b/WinFish/source/WinFish/Coin.cpp
+index c2f5154..ed98e41 100644
+--- a/WinFish/source/WinFish/Coin.cpp
++++ b/WinFish/source/WinFish/Coin.cpp
+@@ -17,6 +17,9 @@
+ #include "BilaterusHead.h"
+ #include "Missle.h"
+ #include "Res.h"
++#include "CoopGame.h"
++#include "CoopSession.h"
++#include "CoopRace.h"
+ 
+ using namespace Sexy;
+ 
+@@ -557,6 +560,12 @@ void Sexy::Coin::MouseDown(int x, int y, int theClickCount)
+ 
+ 	if (mCoinType == COIN_NOTE || m0x198)
+ 		return;
++	// Coin Rivals: coins from a rival's fish are theirs for a moment.
++	if (Coop::RivalsCoinLocked(this, Coop::S().CurrentPlayer()))
++		return;
++	// Tank Race coin blocker: no collecting for a while.
++	if (Coop::RaceCoinsBlocked())
++		return;
+ 	Board* aBoard = mApp->mBoard;
+ 	bool aFlag = false;
+ 	if (aBoard->AliensInTank() || aBoard->mMissleList1->size() > 0)
+@@ -600,6 +609,8 @@ void Sexy::Coin::MouseDown(int x, int y, int theClickCount)
+ 	}
+ 
+ 	m0x17c = 1;
++	mCoopCollector = Coop::S().CurrentPlayer();
++	Coop::OnCoinCollected(GetValue());	// co-op: credit whoever clicked it
+ 
+ 	m0x180 = mXD;
+ 	m0x184 = mYD;
+@@ -764,7 +775,8 @@ int Sexy::Coin::GetValue()
+ void Sexy::Coin::ReceiveMoney()
+ {
+ 	mApp->mBoard->mShouldSave = true;
+-	mApp->mBoard->Unk07(GetValue());
++	if (!Coop::RivalsReceive(mApp->mBoard, this, GetValue()))
++		mApp->mBoard->Unk07(GetValue());
+ }
+ 
+ void Sexy::Coin::PetCollected()
+diff --git a/WinFish/source/WinFish/Fish.cpp b/WinFish/source/WinFish/Fish.cpp
+index a7c2060..596cf69 100644
+--- a/WinFish/source/WinFish/Fish.cpp
++++ b/WinFish/source/WinFish/Fish.cpp
+@@ -737,7 +737,7 @@ void Sexy::Fish::OnFoodAte(GameObject* obj)
+         }
+         else if (aFood->mFoodType == 3)
+         {
+-            if (mSize == 0 || mSize == 1)
++            if (mSize == 0 || mSize == 1 || aFood->mCoopPoison)
+             {
+                 mApp->mBoard->PlaySample(SOUND_EXPLODE_ID, 3, 1.0);
+                 int aNumOfSmokes = mApp->mSeed->Next() % 3 + 2;
+@@ -749,7 +749,7 @@ void Sexy::Fish::OnFoodAte(GameObject* obj)
+                     mApp->mBoard->SpawnShot(aX, aY, aType);
+                 }
+ 
+-                if (mApp->mBoard->mTank == 2 && mApp->mBoard->mLevel < 3 && !mApp->mCurrentProfile->mFinishedGame)
++                if (!aFood->mCoopPoison && mApp->mBoard->mTank == 2 && mApp->mBoard->mLevel < 3 && !mApp->mCurrentProfile->mFinishedGame)
+                 {
+                     if (mApp->mBoard->mMessageShown[32])
+                         mApp->mBoard->ShowText("Hint: Feed star potions to BIG guppies!", false, 33);
+diff --git a/WinFish/source/WinFish/FishTypePet.cpp b/WinFish/source/WinFish/FishTypePet.cpp
+index 91f3b8f..8eafee5 100644
+--- a/WinFish/source/WinFish/FishTypePet.cpp
++++ b/WinFish/source/WinFish/FishTypePet.cpp
+@@ -1190,7 +1190,7 @@ Sexy::GameObject* Sexy::FishTypePet::FindNearestFood()
+ 				int ax = (mXD + 40.0) - (anObj->mX + 20);
+ 				int ay = (mYD + 40.0) - (anObj->mY + 20);
+ 				int aNewDist = sqrt(ax * ax + ay * ay);
+-				if (anObj->mExoticFoodType == 0 && anObj->m0x18c == 0 && aNewDist < aDist)
++				if (anObj->mExoticFoodType == 0 && anObj->m0x18c == 0 && !anObj->mCoopPoison && aNewDist < aDist)
+ 				{
+ 					aRet = anObj;
+ 					aDist = aNewDist;
+diff --git a/WinFish/source/WinFish/Food.cpp b/WinFish/source/WinFish/Food.cpp
+index 8ac1051..73d1d86 100644
+--- a/WinFish/source/WinFish/Food.cpp
++++ b/WinFish/source/WinFish/Food.cpp
+@@ -4,6 +4,9 @@
+ #include "Board.h"
+ #include "WinFishApp.h"
+ #include "Res.h"
++#include "CoopGame.h"
++#include "CoopSession.h"
++#include "CoopRace.h"
+ 
+ using namespace Sexy;
+ 
+@@ -93,8 +96,11 @@ void Sexy::Food::Update()
+ 
+ 			if (mY < 40)
+ 			{
++				Board* aBoard = mApp->mBoard;
++				bool aRivals = Coop::RivalsReceive(aBoard, this, 1);
+ 				Remove();
+-				mApp->mBoard->Unk07(1);
++				if (!aRivals)
++					aBoard->Unk07(1);
+ 				return;
+ 			}
+ 			Move(mXD, mYD);
+@@ -210,6 +216,11 @@ void Sexy::Food::Draw(Graphics* g)
+ 			aX = 0;
+ 			aY = -3;
+ 		}
++		if (mCoopPoison && m0x180 == 0)
++		{
++			g->SetColorizeImages(true);
++			g->SetColor(Color(110, 255, 70));	// toxic green, unlike the player's own star potions
++		}
+ 		if (mFoodType == 0 || mFoodType == 1 || mFoodType == 2 || mFoodType == 3)
+ 			g->DrawImageCel(IMAGE_FOOD, aX, aY, m0x178 / m0x17c, mFoodType);
+ 		g->SetColorizeImages(false);
+@@ -223,6 +234,11 @@ void Sexy::Food::MouseDown(int x, int y, int theClickCount)
+ 		PickUp();
+ 		return;
+ 	}
++	if (theClickCount > -1 && mCoopPoison)
++	{
++		Coop::RacePoisonClicked(this);
++		return;
++	}
+ 	mApp->mBoard->CheckMouseDown(mX + x, mY + y);
+ }
+ 
+diff --git a/WinFish/source/WinFish/Food.h b/WinFish/source/WinFish/Food.h
+index ad8875f..ccef356 100644
+--- a/WinFish/source/WinFish/Food.h
++++ b/WinFish/source/WinFish/Food.h
+@@ -32,6 +32,7 @@ namespace Sexy
+ 		bool m0x190;
+ 		int mExoticFoodType;
+ 		int mCantEatTimer;
++		bool mCoopPoison = false;	// Tank Race poison raid: kills the fish that eats it
+ 
+ 	public:
+ 		Food();
+diff --git a/WinFish/source/WinFish/GameObject.cpp b/WinFish/source/WinFish/GameObject.cpp
+index cf610e8..d3530a7 100644
+--- a/WinFish/source/WinFish/GameObject.cpp
++++ b/WinFish/source/WinFish/GameObject.cpp
+@@ -17,6 +17,7 @@
+ #include "Res.h"
+ 
+ #include <ctime>
++#include "CoopGame.h"
+ 
+ using namespace Sexy;
+ 
+@@ -320,7 +321,13 @@ void GameObject::UpdateHungerAnimCounter()
+ void GameObject::UpdateHungerCounter()
+ {
+ 	if (mSongId == -1)
++	{
+ 		mHunger--;
++		// Co-op: two feeders, so fish get hungry a little faster.
++		int anExtra = Coop::HungerExtraPeriod();
++		if (anExtra > 0 && mApp->mGameMode != GAMEMODE_VIRTUAL_TANK && mUpdateCnt % anExtra == 0)
++			mHunger--;
++	}
+ 	if (mHunger == mHungerShowTreshold + 4)
+ 		UpdateHungerState(true);
+ 	else if (mHunger < -1000)
+diff --git a/WinFish/source/WinFish/GameObject.h b/WinFish/source/WinFish/GameObject.h
+index 6a8f2d1..d016a01 100644
+--- a/WinFish/source/WinFish/GameObject.h
++++ b/WinFish/source/WinFish/GameObject.h
+@@ -150,6 +150,10 @@ namespace Sexy
+ 		int					mTimesFedToday;
+ 		int					mMentalState;
+ 		int					mRandomHappiestMentalId;
++		// Coin Rivals (co-op mod): which player owns this creature/coin (-1 = nobody)
++		// and which player clicked it to pick it up (coins, larvae; -1 = nobody yet).
++		int					mCoopOwner = -1;
++		int					mCoopCollector = -1;
+ 
+ 	public:
+ 		GameObject();
+diff --git a/WinFish/source/WinFish/GameSelector.cpp b/WinFish/source/WinFish/GameSelector.cpp
+index 2bd31bc..68015f6 100644
+--- a/WinFish/source/WinFish/GameSelector.cpp
++++ b/WinFish/source/WinFish/GameSelector.cpp
+@@ -8,6 +8,9 @@
+ #include "WinFishCommon.h"
+ #include "ProfileMgr.h"
+ #include "Res.h"
++#include "CoopUI.h"
++#include "CoopSession.h"
++#include "CoopVersus.h"
+ 
+ Sexy::GameSelector::GameSelector(WinFishApp* theApp)
+ {
+@@ -64,11 +67,15 @@ Sexy::GameSelector::GameSelector(WinFishApp* theApp)
+ 	mQuitButton->Resize(514, 412, 89, mQuitButton->mHeight);
+ 
+ 	mHallOfFameButton = MakeDialogButton2(6, this, "Hall of Fame", IMAGE_MAINBUTTON);
+-	mHallOfFameButton->Resize(401, 380, 127, mHallOfFameButton->mHeight);
++	mHallOfFameButton->Resize(468, 380, 133, mHallOfFameButton->mHeight);
+ 
+ 	mHelpButton = MakeDialogButton2(7, this, "Help", IMAGE_CENTERBUTTON);
+ 	mHelpButton->Resize(419, 412, 93, mHelpButton->mHeight);
+ 
++	mCoopButton = MakeDialogButton2(13, this, Coop::CoopButtonLabel(), IMAGE_MAINBUTTON);
++	mCoopButton->SetColor(0, Color(90, 230, 255));
++	mCoopButton->Resize(327, 380, 139, mCoopButton->mHeight);
++
+ 	mGameSelectorOverlay = new GameSelectorOverlay();
+ 	mGameSelectorOverlay->mScreen = this;
+ 	mGameSelectorOverlay->mMouseVisible = false;
+@@ -124,6 +131,8 @@ Sexy::GameSelector::~GameSelector()
+ 		delete mHallOfFameButton;
+ 	if (mHelpButton)
+ 		delete mHelpButton;
++	if (mCoopButton)
++		delete mCoopButton;
+ 	if (mGameSelectorOverlay)
+ 		delete mGameSelectorOverlay;
+ 	if (mNotYouButton)
+@@ -181,6 +190,12 @@ void Sexy::GameSelector::Update()
+ 	}
+ 
+ 	MarkDirty();
++	std::string aCoopLabel = Coop::CoopButtonLabel();
++	if (mCoopButton->mLabel != aCoopLabel)
++	{
++		mCoopButton->mLabel = aCoopLabel;
++		mCoopButton->MarkDirty();
++	}
+ 	int aHover = 0;
+ 	if (mAdventureButton->mIsOver || mAdventureButton->mIsDown)
+ 		aHover = 1;
+@@ -299,6 +314,8 @@ void Sexy::GameSelector::AddedToManager(WidgetManager* theWidgetManager)
+ 	theWidgetManager->AddWidget(mTimeTrialButton);
+ 	theWidgetManager->AddWidget(mHallOfFameButton);
+ 	theWidgetManager->AddWidget(mHelpButton);
++	theWidgetManager->AddWidget(mCoopButton);
++	Coop::AttachMenuPanel(theWidgetManager);	// multiplayer panel (host with a guest)
+ 
+ 	if (!mNotYouButton)
+ 	{
+@@ -330,6 +347,8 @@ void Sexy::GameSelector::RemovedFromManager(WidgetManager* theWidgetManager)
+ 	theWidgetManager->RemoveWidget(mTimeTrialButton);
+ 	theWidgetManager->RemoveWidget(mHallOfFameButton);
+ 	theWidgetManager->RemoveWidget(mHelpButton);
++	theWidgetManager->RemoveWidget(mCoopButton);
++	Coop::DetachMenuPanel(theWidgetManager);
+ 	if(mNotYouButton)
+ 		theWidgetManager->RemoveWidget(mNotYouButton);
+ 	theWidgetManager->RemoveWidget(mGameSelectorOverlay);
+@@ -341,6 +360,8 @@ void Sexy::GameSelector::OrderInManagerChanged()
+ 	if(mNotYouButton)
+ 		mWidgetManager->PutInfront(mNotYouButton, this);
+ 	mWidgetManager->PutInfront(mHelpButton, this);
++	mWidgetManager->PutInfront(mCoopButton, this);
++	Coop::MenuPanelToFront(mWidgetManager, this);
+ 	mWidgetManager->PutInfront(mHallOfFameButton, this);
+ 	mWidgetManager->PutInfront(mTimeTrialButton, this);
+ 	mWidgetManager->PutInfront(mChallengeButton, this);
+@@ -437,6 +458,10 @@ void Sexy::GameSelector::ButtonDepress(int theId)
+ 	{
+ 		mApp->DoWhoAreYouDialog();
+ 	}
++	else if (theId == 13)
++	{
++		Coop::OpenCoopDialog(mApp);
++	}
+ }
+ 
+ void Sexy::GameSelector::MouseDown(int x, int y, int theClickCount)
+diff --git a/WinFish/source/WinFish/GameSelector.h b/WinFish/source/WinFish/GameSelector.h
+index 425f4b1..02aa844 100644
+--- a/WinFish/source/WinFish/GameSelector.h
++++ b/WinFish/source/WinFish/GameSelector.h
+@@ -34,6 +34,7 @@ namespace Sexy
+ 		ButtonWidget*			mTimeTrialButton;
+ 		DialogButton*			mHallOfFameButton;
+ 		DialogButton*			mHelpButton;
++		DialogButton*			mCoopButton;		// Insaniquarium Co-op
+ 		HyperlinkWidget*		mNotYouButton;
+ 		int						mHoverId;
+ 		int						mSpeechFadeTimer;
+diff --git a/WinFish/source/WinFish/Larva.cpp b/WinFish/source/WinFish/Larva.cpp
+index becf17a..d53b874 100644
+--- a/WinFish/source/WinFish/Larva.cpp
++++ b/WinFish/source/WinFish/Larva.cpp
+@@ -4,6 +4,9 @@
+ #include "WinFishApp.h"
+ #include "Board.h"
+ #include "Res.h"
++#include "CoopGame.h"
++#include "CoopSession.h"
++#include "CoopRace.h"
+ 
+ Sexy::Larva::Larva()
+ {
+@@ -64,9 +67,12 @@ void Sexy::Larva::Update()
+ 
+ 		if (mY < 40)
+ 		{
++			Board* aBoard = mApp->mBoard;
++			bool aRivals = Coop::RivalsReceive(aBoard, this, GetValue());
+ 			Remove();
+-			mApp->mBoard->m0x4a8++;
+-			mApp->mBoard->Unk07(GetValue());
++			aBoard->m0x4a8++;
++			if (!aRivals)
++				aBoard->Unk07(GetValue());
+ 			return;
+ 		}
+ 	}
+@@ -84,7 +90,10 @@ void Sexy::Larva::MouseDown(int x, int y, int theClickCount)
+ {
+ 	if (theClickCount > -1)
+ 	{
++		if (mPickedUp || Coop::RivalsCoinLocked(this, Coop::S().CurrentPlayer()) || Coop::RaceCoinsBlocked())
++			return;
+ 		mPickedUp = true;
++		mCoopCollector = Coop::S().CurrentPlayer();
+ 		mApp->mBoard->PlayPointsSound();
+ 	}
+ 	else
+diff --git a/WinFish/source/WinFish/OptionsDialog.cpp b/WinFish/source/WinFish/OptionsDialog.cpp
+index ed2a793..92e5752 100644
+--- a/WinFish/source/WinFish/OptionsDialog.cpp
++++ b/WinFish/source/WinFish/OptionsDialog.cpp
+@@ -7,6 +7,8 @@
+ #include "WinFishCommon.h"
+ #include "Board.h"
+ #include "Res.h"
++#include "CoopUI.h"
++#include "CoopSession.h"
+ 
+ // Baked in at build time from the PORT_VERSION file (see CMakeLists.txt).
+ #ifndef WINFISH_PORT_VERSION
+@@ -27,7 +29,7 @@ Sexy::OptionsDialog::OptionsDialog(WinFishApp* theApp, bool theFlag)
+ 	SexyString aWebLinkStr = mApp->GetString("weblinktext", "");
+ 	mWebLinkButton = MakeDialogButton(2, this, aWebLinkStr, NULL);
+ 
+-	mCheckUpdatesButton = MakeDialogButton(4, this, "Check Updates", NULL);
++	mCheckUpdatesButton = MakeDialogButton(4, this, Coop::CoopButtonLabel(), NULL);	// co-op build: this slot opens the Co-op window
+ 	mBackButton = MakeDialogButton(3, this, "Back to Main Menu", NULL);
+ 
+ 	mMusicSlider = new Slider(IMAGE_SLIDERTRACK, IMAGE_SLIDERTHUMB, 5, this);
+@@ -46,8 +48,12 @@ Sexy::OptionsDialog::OptionsDialog(WinFishApp* theApp, bool theFlag)
+ 
+ 	if (theFlag)
+ 		mBackButton->SetVisible(false);
+-	if (mApp->mDontUpdate)
++	if (Coop::S().IsGuest())
++	{
++		// A guest's Options only change this computer's settings.
++		mHelpButton->SetVisible(false);
+ 		mCheckUpdatesButton->SetVisible(false);
++	}
+ 	if(mApp->mBuildUnlocked)
+ 		mRegisterButton->SetVisible(false);
+ 	mWebLinkButton->SetVisible(mWebLinkButton->mLabel.size() != 0);
+@@ -125,7 +131,7 @@ void Sexy::OptionsDialog::Draw(Graphics* g)
+ 	// "MacOS lol" easter egg (empty mProductVersion); this is a separate, honest
+ 	// version string the in-app updater tracks releases by.
+ 	auto* aVerFont = g->GetFont();
+-	SexyString aVer = SexyString("v") + WINFISH_PORT_VERSION;
++	SexyString aVer = SexyString("Co-op v") + COOP_VERSION;
+ 	int aOkBottom  = (mYesButton->mY - mY) + mYesButton->mHeight;
+ 	// Center in the visible gap between the OK button and the bottom frame:
+ 	// the outer edge (mHeight) sits on the wood border, so pull up a quarter of
+@@ -271,7 +277,7 @@ void Sexy::OptionsDialog::ButtonDepress(int theId)
+ 	case 3:
+ 		break;
+ 	case 4:
+-		mApp->DoUpdateCheckDialog();
++		Coop::OpenCoopDialog(mApp);
+ 		return;
+ 	default:
+ 		return;
+diff --git a/WinFish/source/WinFish/OtherTypePet.cpp b/WinFish/source/WinFish/OtherTypePet.cpp
+index dd27f16..a173eba 100644
+--- a/WinFish/source/WinFish/OtherTypePet.cpp
++++ b/WinFish/source/WinFish/OtherTypePet.cpp
+@@ -14,6 +14,7 @@
+ #include "Ultra.h"
+ #include "Coin.h"
+ #include "Res.h"
++#include "CoopRace.h"
+ 
+ using namespace Sexy;
+ 
+@@ -1070,7 +1071,8 @@ void Sexy::OtherTypePet::CollideWithObject()
+ 						continue;
+ 
+ 					if (mXD + 40.0 > aCoin->mX + 16 && mXD + 40.0 < aCoin->mX + 56 &&
+-						mYD + 40.0 > aCoin->mY + 16 && mYD + 40.0 < aCoin->mY + 56 && aCoin->mCoinType < 15)
++						mYD + 40.0 > aCoin->mY + 16 && mYD + 40.0 < aCoin->mY + 56 && aCoin->mCoinType < 15 &&
++						!Coop::RaceCoinsBlocked())	// Tank Race coin blocker
+ 					{
+ 						aCoin->PetCollected();
+ 						aCoin->Remove();
+diff --git a/WinFish/source/WinFish/PetsScreen.cpp b/WinFish/source/WinFish/PetsScreen.cpp
+index 45b4875..d29c569 100644
+--- a/WinFish/source/WinFish/PetsScreen.cpp
++++ b/WinFish/source/WinFish/PetsScreen.cpp
+@@ -5,6 +5,7 @@
+ 
+ #include "PetsScreen.h"
+ #include "WinFishApp.h"
++#include "CoopRace.h"
+ #include "WinFishCommon.h"
+ #include "PetButtonWidget.h"
+ #include "Board.h"
+@@ -120,7 +121,8 @@ Sexy::PetsScreen::PetsScreen(WinFishApp* theApp)
+ 		}
+ 	}
+ 
+-	m0x130 = mApp->mCurrentProfile->m0xb4 < mApp->mCurrentProfile->mNumOfUnlockedPets ? mApp->mCurrentProfile->m0xb4 : mApp->mCurrentProfile->mNumOfUnlockedPets;
++	int aSlots = Coop::RaceStagePetSlots(mApp->mCurrentProfile->m0xb4), aUnlocked = Coop::RaceStagePetCount(mApp->mCurrentProfile->mNumOfUnlockedPets);
++	m0x130 = aSlots < aUnlocked ? aSlots : aUnlocked;
+ 
+ 	if (mApp->mGameMode != GAMEMODE_VIRTUAL_TANK && m0x130 > 4)
+ 		m0x130 = 4;
+diff --git a/WinFish/source/WinFish/ProfileMgr.cpp b/WinFish/source/WinFish/ProfileMgr.cpp
+index 7d52fef..214f3d1 100644
+--- a/WinFish/source/WinFish/ProfileMgr.cpp
++++ b/WinFish/source/WinFish/ProfileMgr.cpp
+@@ -3,6 +3,7 @@
+ #include "ProfileMgr.h"
+ #include "WinFishApp.h"
+ #include "WinFishCommon.h"
++#include "CoopRace.h"
+ 
+ using namespace Sexy;
+ 
+@@ -575,6 +576,9 @@ void Sexy::UserProfile::AddShells(int theValue)
+ 
+ bool Sexy::UserProfile::IsPetUnlocked(int idx)
+ {
++    int aVersus = Coop::RaceStagePetOverride(idx);	// Versus: the tank's stage decides
++    if (aVersus >= 0)
++        return aVersus != 0;
+     return mUnlockedPets[idx];
+ }
+ 
+diff --git a/WinFish/source/WinFish/SexyApp.cpp b/WinFish/source/WinFish/SexyApp.cpp
+index 7ba839a..58fdf21 100644
+--- a/WinFish/source/WinFish/SexyApp.cpp
++++ b/WinFish/source/WinFish/SexyApp.cpp
+@@ -404,6 +404,9 @@ bool SexyApp::OpenRegisterPage(DefinesMap theStatsMap)
+ 
+ bool SexyApp::ShouldCheckForUpdate()
+ {
++#ifdef COOP_VERSION
++	return false;	// the co-op build has no self-updater
++#endif
+ 	if (mDontUpdate)
+ 		return false;
+ 
+diff --git a/WinFish/source/WinFish/TitleScreen.cpp b/WinFish/source/WinFish/TitleScreen.cpp
+index 836ebc8..fe31f50 100644
+--- a/WinFish/source/WinFish/TitleScreen.cpp
++++ b/WinFish/source/WinFish/TitleScreen.cpp
+@@ -155,7 +155,7 @@ void TitleScreen::Draw(Graphics* g)
+ 	// The Steam build ships an empty product version, so the title just read
+ 	// "Version". Native macOS port easter egg. :)
+ 	SexyString aVersionStr = mApp->mProductVersion.empty()
+-		? SexyString("MacOS lol")
++		? SexyString("Co-op " COOP_VERSION)
+ 		: SexyString("Version " + mApp->mProductVersion);
+ 	int aStrWdth = g->GetFont()->StringWidth(aVersionStr);
+ 	g->WriteString(aVersionStr, mWidth - aStrWdth / 2 - 16, 211);
+diff --git a/WinFish/source/WinFish/WinFishApp.cpp b/WinFish/source/WinFish/WinFishApp.cpp
+index eb3c6fe..8819574 100644
+--- a/WinFish/source/WinFish/WinFishApp.cpp
++++ b/WinFish/source/WinFish/WinFishApp.cpp
+@@ -14,6 +14,8 @@
+ #include <unistd.h> // getpid
+ 
+ #include "WinFishApp.h"
++#include <SexyAppFramework/CoopHooks.h>
++#include "CoopRace.h"
+ #include "WinFishCommon.h"
+ #include "InternetManager.h"
+ #include "SaverBridge.h"
+@@ -229,11 +231,11 @@ WinFishApp::WinFishApp()
+ 
+ 	mProdName = "Insaniquarium";
+ 
+-	// Default to fullscreen on macOS (a persisted ScreenMode in the registry
+-	// still overrides this once the player picks a mode in Options).
+-	mIsWindowed = false;
++	// Co-op build: default to a window (hosting pops up the firewall prompt, and
++	// players alt-tab to chat). A ScreenMode saved from Options still wins.
++	mIsWindowed = true;
+ 
+-	mTitle = SexyString("Insaniquarium Deluxe " + mProductVersion);
++	mTitle = SexyString("Insaniquarium Co-op");
+ 	
+ 	mRegKey = "PopCap/Insaniquarium";
+ 	mScreenSaverRegKey = "ScreenSaver/";
+@@ -715,6 +717,9 @@ void Sexy::WinFishApp::ModalOpen()
+ 
+ void WinFishApp::LostFocus()
+ {
++	// In co-op the other player is still playing: never auto-pause on alt-tab.
++	if (gAppHook != nullptr && !gAppHook->AllowLostFocusPause())
++		return;
+ 	if (mBoard != NULL && mGameMode != GAMEMODE_VIRTUAL_TANK)
+ 		DoLostFocusDialog();
+ }
+@@ -1129,9 +1134,9 @@ Image* Sexy::WinFishApp::LoadMaskImage(Image* theImage, Image* theImageMask, int
+ 	g.DrawImage(theImage, -aFinalClipRect.mX, -aFinalClipRect.mY);
+ 
+ 
+-	DWORD* aNewBits = aNewImage->GetBits();
++	uint32_t* aNewBits = aNewImage->GetBits();
+ 	MemoryImage* aMemoryMask = dynamic_cast<MemoryImage*>(theImageMask);
+-	DWORD* aMaskBits = aMemoryMask->GetBits();
++	uint32_t* aMaskBits = aMemoryMask->GetBits();
+ 
+ 	if (aNewBits == NULL || aMaskBits == NULL)
+ 	{
+@@ -1248,9 +1253,13 @@ void Sexy::WinFishApp::SetScreenSaver(const char* thePath)
+ #endif
+ }
+ 
++bool gCoopForceWindowed = false;
++
+ void Sexy::WinFishApp::ReadFromRegistry()
+ {
+ 	SexyApp::ReadFromRegistry();
++	if (gCoopForceWindowed)
++		mIsWindowed = true;	// -windowed on the command line
+ 
+ 	mScreenSaverSound = GetBoolean("ScrSound", true);
+ 
+@@ -2071,6 +2080,7 @@ void Sexy::WinFishApp::StartGame()
+ 
+ 	mBoard->StartGame();
+ 	StartGameMusic();
++	Coop::RaceOnGameStarted();	// Tank Race: freeze the new tank until the countdown
+ }
+ 
+ bool Sexy::WinFishApp::LoadBoardGame()
+@@ -2154,6 +2164,8 @@ void Sexy::WinFishApp::CreateBoard()
+ 
+ bool Sexy::WinFishApp::IsBonusLevel()
+ {
++	if (Coop::RaceBusy())
++		return mBoard != nullptr && mBoard->mIsBonusRound;	// race tanks are never bonus rounds
+ 	if (mGameMode == GAMEMODE_ADVENTURE && mCurrentProfile->mLevel == 6)
+ 		return true;
+ 	if (mBoard)

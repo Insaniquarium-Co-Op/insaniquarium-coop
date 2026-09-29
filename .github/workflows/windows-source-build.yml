@@ -1,0 +1,30 @@
+# Checks that a player can build the game on Windows from source with Build.bat's script:
+# no WinFish copy in the tree (it's fetched and patched), tools downloaded on the spot.
+name: Windows source build
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['scripts/windows/**', 'scripts/deps/**', 'scripts/upstream.lock', 'patches/**', 'Build.bat', '.github/workflows/windows-source-build.yml']
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Remove developer copies of WinFish and PvZ-Portable (the public repo has neither)
+        shell: pwsh
+        run: Remove-Item -Recurse -Force WinFish, PvZ-Portable -ErrorAction SilentlyContinue
+      - name: Build (as Build.bat does)
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows\build.ps1
+      - name: Check the result
+        shell: pwsh
+        run: |
+          Get-ChildItem "Built Game"
+          if (-not (Test-Path "Built Game\InsaniquariumCoop.exe")) { exit 1 }
+          if (-not (Test-Path "WinFish\.fetched")) { exit 1 }
+          if (-not (Test-Path "PvZ-Portable\.fetched")) { exit 1 }
+      - name: Second run only redoes what changed
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows\build.ps1

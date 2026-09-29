@@ -1,0 +1,10 @@
+Where the parts of Insaniquarium Co-op come from:
+  WinFish/       - not in this repository. The WinFish decompilation of Insaniquarium, with
+                   the insaniquarium-mac port's changes, downloaded at build time from
+                   https://github.com/Jake-Vellora/insaniquarium-mac at the commit in
+                   scripts/upstream.lock; patches/winfish.patch adds this mod's changes.
+  PvZ-Portable/  - not in this repository either. PvZ-Portable's SDL2/OpenGL
+                   SexyAppFramework (LGPL-3.0-or-later and the PopCap Games Framework
+                   License) as trimmed by the insaniquarium-mac port, downloaded from the
+                   same commit; patches/pvz-portable.patch adds this mod's hooks.
+Both are fetched by scripts/fetch-upstream.sh (Mac/Linux) or Build.bat (Windows).

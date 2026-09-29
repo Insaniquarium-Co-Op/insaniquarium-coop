@@ -1,0 +1,8 @@
+# Where the game's source and its framework come from: the insaniquarium-mac port, at a
+# pinned commit. Its WinFish/ is the public WinFish decompilation with the port's changes
+# (MIT port work); its PvZ-Portable/ is PvZ-Portable's SDL2/OpenGL SexyAppFramework
+# (LGPL-3.0-or-later and the PopCap Games Framework License), trimmed for the port.
+# The public repository hosts neither: scripts/fetch-upstream.sh (or Build.bat) downloads
+# them and applies patches/winfish.patch and patches/pvz-portable.patch (the co-op changes).
+UPSTREAM_REPO=https://github.com/Jake-Vellora/insaniquarium-mac.git
+UPSTREAM_COMMIT=e84b27a068d904df1780baaab567eeefed0db6a9
