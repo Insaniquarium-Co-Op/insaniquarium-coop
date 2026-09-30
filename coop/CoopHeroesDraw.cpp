@@ -166,6 +166,77 @@ namespace Coop
 
 		const char* HeroName(int theHero) { return HeroDefOf(theHero).mName; }
 
+		// Speedy (D30): Stinky's art in a neon, purple-heavy palette, made once per image.
+		// Browns turn electric purple, the yellow-green body hot magenta; whites, greys and
+		// the dark outline stay (a little purple), so he still reads as a snail.
+		static Image* Neon(Image* theSrc)
+		{
+			static std::map<Image*, MemoryImage*> sCache;
+			if (theSrc == nullptr)
+				return nullptr;
+			auto it = sCache.find(theSrc);
+			if (it != sCache.end())
+				return it->second != nullptr ? it->second : theSrc;
+			MemoryImage* aSrc = dynamic_cast<MemoryImage*>(theSrc);
+			uint32_t* sb = aSrc != nullptr ? aSrc->GetBits() : nullptr;
+			MemoryImage* m = nullptr;
+			if (sb != nullptr)
+			{
+				int w = aSrc->mWidth, h = aSrc->mHeight;
+				m = new MemoryImage(gSexyAppBase);
+				m->Create(w, h);
+				m->mNumCols = aSrc->mNumCols;
+				m->mNumRows = aSrc->mNumRows;
+				uint32_t* db = m->GetBits();
+				for (int i = 0; i < w * h; i++)
+				{
+					uint32_t p = sb[i];
+					float r = ((p >> 16) & 255) / 255.0f, gr = ((p >> 8) & 255) / 255.0f, b = (p & 255) / 255.0f;
+					float mx = std::max(r, std::max(gr, b)), mn = std::min(r, std::min(gr, b)), d = mx - mn;
+					float hue = 0, sat = mx > 0 ? d / mx : 0, val = mx;
+					if (d > 0)
+					{
+						if (mx == r) hue = 60 * std::fmod((gr - b) / d, 6.0f);
+						else if (mx == gr) hue = 60 * ((b - r) / d + 2);
+						else hue = 60 * ((r - gr) / d + 4);
+						if (hue < 0) hue += 360;
+					}
+					if (sat < 0.18f)
+					{
+						// Greys: a touch of violet.
+						hue = 275;
+						sat = std::min(1.0f, sat + 0.18f);
+					}
+					else
+					{
+						// Browns and oranges (0-50) to purple, yellows and greens (50-150) to magenta;
+						// the shell's dark spiral lines to electric cyan.
+						bool aLine = hue < 50 && val < 0.42f && val > 0.12f;
+						hue = aLine ? 185 : (hue < 50 ? 270 + hue * 0.3f : (hue < 150 ? 300 + (hue - 50) * 0.25f : std::fmod(hue + 120, 360.0f)));
+						sat = std::min(1.0f, sat * 1.3f + 0.25f);
+						val = aLine ? 0.95f : std::min(1.0f, val * 1.25f + 0.12f);
+					}
+					float c = val * sat, x = c * (1 - std::fabs(std::fmod(hue / 60, 2.0f) - 1)), o = val - c;
+					float rr, gg, bb;
+					int k = (int)(hue / 60) % 6;
+					switch (k)
+					{
+					case 0: rr = c; gg = x; bb = 0; break;
+					case 1: rr = x; gg = c; bb = 0; break;
+					case 2: rr = 0; gg = c; bb = x; break;
+					case 3: rr = 0; gg = x; bb = c; break;
+					case 4: rr = x; gg = 0; bb = c; break;
+					default: rr = c; gg = 0; bb = x; break;
+					}
+					auto B = [](float v) { return (uint32_t)std::clamp((int)std::lround(v * 255), 0, 255); };
+					db[i] = (p & 0xFF000000) | (B(rr + o) << 16) | (B(gg + o) << 8) | B(bb + o);
+				}
+				m->BitsChanged();
+			}
+			sCache[theSrc] = m;
+			return m != nullptr ? m : theSrc;
+		}
+
 		Image* HeroImage(int theHero)
 		{
 			switch (theHero)
@@ -174,7 +245,7 @@ namespace Coop
 			case HERO_CLYDE: return IMAGE_CLYDE;
 			case HERO_RHUBARB: return IMAGE_RHUBARB;
 			case HERO_ANGIE: return IMAGE_ANGIE;
-			default: return IMAGE_STINKY;
+			default: return Neon(IMAGE_STINKY);
 			}
 		}
 
@@ -186,7 +257,7 @@ namespace Coop
 			case HERO_CLYDE: return IMAGE_SCL_CLYDE;
 			case HERO_RHUBARB: return IMAGE_SCL_RHUBARB;
 			case HERO_ANGIE: return IMAGE_SCL_ANGIE;
-			default: return IMAGE_SCL_STINKY;
+			default: return Neon(IMAGE_SCL_STINKY);
 			}
 		}
 
@@ -490,6 +561,13 @@ namespace Coop
 			bool aHungry = (f.mFlags & FF_HUNGRY) != 0;
 			if (f.mFlags & FF_DYING)
 			{
+				// The death sheet has guppies (by size) and the carnivore; a breeder dies as
+				// itself, greyed (as in Insaniquarium).
+				if (f.mKind == FISH_BREEDER)
+				{
+					Sprite(g, IMAGE_HUNGRYBREEDER, aFrame, 3, f.mPos.x, f.mPos.y, 1.0f, aMirror, Color(170, 170, 170, 160), true);
+					return;
+				}
 				Sprite(g, IMAGE_SMALLDIE, aFrame, f.mKind == FISH_CARNIVORE ? 4 : std::min<int>(f.mSize, 2), f.mPos.x, f.mPos.y, 1.0f, aMirror, Color(255, 255, 255, 160));
 				return;
 			}
@@ -561,7 +639,7 @@ namespace Coop
 			{
 			case HERO_ITCHY: aRow = (h.mFlags & (HF_ATTACKING | HF_STORM)) ? 2 : 0; break;
 			case HERO_RHUBARB: aRow = (h.mFlags & HF_ATTACKING) ? 1 : 0; aMirror = false; break;
-			case HERO_STINKY: aRow = (h.mFlags & HF_IMMUNE) ? 2 : 0; if (h.mFlags & HF_IMMUNE) aFrame = 9; break;
+			case HERO_SPEEDY: aRow = (h.mFlags & HF_IMMUNE) ? 2 : 0; if (h.mFlags & HF_IMMUNE) aFrame = 9; break;
 			default: break;
 			}
 			float aScale = 1.35f;
@@ -575,7 +653,16 @@ namespace Coop
 				Ring(g, SX(h.mPos.x), SY(h.mPos.y), SX(110), Color(220, 240, 255, 120), 1);
 			}
 			else
+			{
+				if (h.mHero == HERO_SPEEDY)
+				{
+					// Speedy's neon glow.
+					g->SetDrawMode(Graphics::DRAWMODE_ADDITIVE);
+					Sprite(g, anImg, aFrame, aRow, h.mPos.x, h.mPos.y, aScale * 1.12f, aMirror, Color(170, 60, 255, aAlpha * 65 / 100), true);
+					g->SetDrawMode(Graphics::DRAWMODE_NORMAL);
+				}
 				Sprite(g, anImg, aFrame, aRow, h.mPos.x, h.mPos.y, aScale, aMirror, Color(255, 255, 255, aAlpha));
+			}
 			if (h.mFlags & HF_IMMUNE)
 				Ring(g, SX(h.mPos.x), SY(h.mPos.y), SX(r + 12), Color(255, 240, 150, 200), 2);
 			if (h.mShield > 0)
@@ -835,7 +922,9 @@ namespace Coop
 				DrawTower(g, v.mArena, i, a, v.mNow, aFiring[i]);
 			DrawCore(g, v.mArena, a, v.mNow);
 			for (const FoodSnap& f : a.mFood)
-				Sprite(g, IMAGE_FOOD, (v.mNow / 100 + f.mId) % 10, 0, f.mPos.x, f.mPos.y, 0.9f, false);
+				Sprite(g, IMAGE_FOOD, (v.mNow / 100 + f.mId) % 10, std::min<int>(a.mFoodQuality, 2), f.mPos.x, f.mPos.y, 0.9f, false);
+			if (a.mCollectorLevel > 0)		// Stinky the pet, in his own colors (the hero is Speedy)
+				Sprite(g, IMAGE_STINKY, (v.mNow / (a.mCollectorLevel >= 2 ? 45 : 80)) % 10, 0, a.mCollectorPos.x, a.mCollectorPos.y, 0.8f, a.mCollectorRight);
 			for (const FishSnap& f : a.mFish)
 				DrawFish(g, f, v.mNow);
 			for (const CoinSnap& c : a.mCoins)
@@ -971,7 +1060,7 @@ namespace Coop
 			}
 		}
 
-		static void ShopIcon(Graphics* g, int theShop, float cx, float cy, float theSize, uint32_t theNow)
+		static void ShopIcon(Graphics* g, int theShop, float cx, float cy, float theSize, uint32_t theNow, int theFoodRow = 1)
 		{
 			int f = (int)((theNow / 90) % 10);
 			switch (theShop)
@@ -979,8 +1068,9 @@ namespace Coop
 			case SHOP_GUPPY: ScreenSprite(g, IMAGE_SMALLSWIM, f, 1, cx, cy, theSize / 60, false); break;
 			case SHOP_BREEDER: ScreenSprite(g, IMAGE_BREEDER, f, 3, cx, cy, theSize / 60, false); break;
 			case SHOP_CARNIVORE: ScreenSprite(g, IMAGE_SMALLSWIM, f, 4, cx, cy, theSize / 64, false); break;
-			case SHOP_FOOD_QUALITY: ScreenSprite(g, IMAGE_FOOD, f, 1, cx, cy, theSize / 34, false); break;
+			case SHOP_FOOD_QUALITY: ScreenSprite(g, IMAGE_FOOD, f, theFoodRow, cx, cy, theSize / 34, false); break;	// the next level's food
 			case SHOP_FOOD_COUNT: ScreenSprite(g, IMAGE_FOOD, f, 0, cx, cy, theSize / 34, false); break;
+			case SHOP_COLLECTOR: ScreenSprite(g, IMAGE_STINKY, f, 0, cx, cy, theSize / 60, false); break;
 			case SHOP_LASER: ScreenSprite(g, IMAGE_ENERGYBALL, f % 6, 0, cx, cy, theSize / 70, false, Color(255, 120, 90), true); break;
 			case SHOP_REPAIR_LEFT: case SHOP_REPAIR_RIGHT: case SHOP_TOWER_UPGRADE: ScreenSprite(g, IMAGE_NIKO, 0, theShop == SHOP_TOWER_UPGRADE ? 1 : 0, cx, cy, theSize / 64, false); break;
 			case SHOP_WAVE_SIZE: case SHOP_WAVE_TOUGH: ScreenSprite(g, IMAGE_MINISYLV, f, 0, cx, cy, theSize / 64, false, theShop == SHOP_WAVE_TOUGH ? Color(255, 160, 140) : Color(255, 255, 255), theShop == SHOP_WAVE_TOUGH); break;
@@ -1027,19 +1117,22 @@ namespace Coop
 			case HERO_ANGIE * AB_COUNT + AB_W: ScreenSprite(g, IMAGE_HALO, f, 0, cx, cy - 4 * k, 1.1f * k, false); Ring(g, cx, cy + 2 * k, 10 * k, Color(255, 245, 170), 1); break;
 			case HERO_ANGIE * AB_COUNT + AB_E: ScreenSprite(g, IMAGE_MINISYLV, f, 0, cx, cy, 0.34f * k, false, Color(255, 150, 220), true); break;
 			case HERO_ANGIE * AB_COUNT + AB_R: ScreenSprite(g, IMAGE_ANGIE, f, 0, cx, cy + 2 * k, 0.32f * k, false); ScreenSprite(g, IMAGE_HALO, f, 0, cx, cy - 10 * k, 0.9f * k, false); break;
-			case HERO_STINKY * AB_COUNT + AB_Q: Disc(g, cx, cy + 5 * k, 10 * k, Color(120, 220, 70, 170), 14); ScreenSprite(g, IMAGE_STINKY, f, 0, cx, cy - 3 * k, 0.28f * k, false); break;
-			case HERO_STINKY * AB_COUNT + AB_W: ScreenSprite(g, IMAGE_SMOKESMALL, f, 0, cx, cy, 0.55f * k, false, Color(140, 220, 80), true); break;
-			case HERO_STINKY * AB_COUNT + AB_E: ScreenSprite(g, IMAGE_STINKY, 9, 2, cx, cy, 0.4f * k, false); break;
+			case HERO_SPEEDY * AB_COUNT + AB_Q: Disc(g, cx, cy + 5 * k, 10 * k, Color(120, 220, 70, 170), 14); ScreenSprite(g, HeroImage(HERO_SPEEDY), f, 0, cx, cy - 3 * k, 0.28f * k, false); break;
+			case HERO_SPEEDY * AB_COUNT + AB_W: ScreenSprite(g, IMAGE_SMOKESMALL, f, 0, cx, cy, 0.55f * k, false, Color(140, 220, 80), true); break;
+			case HERO_SPEEDY * AB_COUNT + AB_E: ScreenSprite(g, HeroImage(HERO_SPEEDY), 9, 2, cx, cy, 0.4f * k, false); break;
 			default: ScreenSprite(g, IMAGE_MONEY, f, 1, cx, cy, 0.42f * k, false); break;
 			}
 		}
 
-		static void MiniMap(Graphics* g, const Rect& r, const Side& s, int theArena, uint32_t theNow)
+		static void MiniMap(Graphics* g, const Rect& r, const Side& s, int theArena, uint32_t theNow, bool theAlert = false)
 		{
-			g->SetColor(Color(10, 30, 60, 230));
+			bool aFlash = theAlert && (theNow / 250) % 2 == 0;
+			g->SetColor(aFlash ? Color(120, 20, 20, 235) : Color(10, 30, 60, 230));
 			g->FillRect(r);
-			g->SetColor(Color(120, 170, 220, 160));
+			g->SetColor(theAlert ? Color(255, 80, 70, 230) : Color(120, 170, 220, 160));
 			g->DrawRect(r.mX, r.mY, r.mWidth - 1, r.mHeight - 1);
+			if (theAlert)
+				g->DrawRect(r.mX + 1, r.mY + 1, r.mWidth - 3, r.mHeight - 3);
 			ArenaSnap a = s.ViewArena(theArena);
 			auto P = [&](Vec w) { return Point(r.mX + (int)(w.x / kWorldW * r.mWidth), r.mY + (int)(w.y / kWorldH * r.mHeight)); };
 			for (const FishSnap& f : a.mFish)
@@ -1104,9 +1197,13 @@ namespace Coop
 				snprintf(b, sizeof(b), "warp %ds", (int)std::ceil(aSick / 1000.0f));
 				Text(g, FONT_TINY, b, 110, kHudY + 30, Color(200, 160, 255));
 			}
+			if (d.mWalker && (int32_t)(v.mNow - h.mHopReadyAt) < 0)
+			{
+				snprintf(b, sizeof(b), "hop %ds", (int)std::ceil((h.mHopReadyAt - v.mNow) / 1000.0f));
+				Text(g, FONT_TINY, b, 110, kHudY + 40, Color(160, 220, 255));
+			}
 
 			// Abilities.
-			static const char* kKeys[AB_COUNT] = { "Q", "W", "E", "R" };
 			for (int i = 0; i < AB_COUNT; i++)
 			{
 				Rect r = AbilityRect(i);
@@ -1128,7 +1225,7 @@ namespace Coop
 					Centered(g, FONT_TINY, "Lv5", r.mX + 17, r.mY + 22, Color(160, 160, 170));
 				g->SetColor(v.mAimSlot == i ? Color(255, 255, 255) : Color(120, 160, 220));
 				g->DrawRect(r.mX, r.mY, r.mWidth - 1, r.mHeight - 1);
-				Text(g, FONT_TINYBOLD, kKeys[i], r.mX + 2, r.mY + 9, Color(255, 240, 160));
+				Text(g, FONT_TINYBOLD, kAbilityKeys[i], r.mX + 2, r.mY + 9, Color(255, 240, 160));
 				// Rank pips.
 				int aMaxRank = i == AB_R ? 2 : kMaxRank;
 				for (int k = 0; k < aMaxRank; k++)
@@ -1158,7 +1255,7 @@ namespace Coop
 				bool aCan = s.CanBuy(aShop);
 				g->SetColor(aCan ? Color(40, 70, 50) : Color(40, 36, 44));
 				g->FillRect(r);
-				ShopIcon(g, aShop, r.mX + 14.0f, r.mY + 14.0f, 22, v.mNow);
+				ShopIcon(g, aShop, r.mX + 14.0f, r.mY + 14.0f, 22, v.mNow, std::min(s.mArena.mFoodQuality + 1, 2));
 				Text(g, FONT_TINY, std::to_string(i + 1), r.mX + 2, r.mY + 8, Color(255, 240, 160));
 				Centered(g, FONT_TINY, "$" + std::to_string(s.Price(aShop)), r.mX + 14, r.mY + 34, aCan ? Color(255, 225, 90) : Color(150, 140, 150));
 			}
@@ -1171,7 +1268,20 @@ namespace Coop
 			int aMapArena = h.mArena == s.mTeam && v.mArena == s.mTeam ? 1 - s.mTeam : s.mTeam;
 			if (v.mArena != s.mTeam)
 				aMapArena = s.mTeam;
-			MiniMap(g, MapRect(), s, aMapArena, v.mNow);
+			bool aAlert = !v.mAlert.empty() && v.mArena != s.mTeam && !Elapsed(v.mNow, v.mAlertAt + kAlertShowMs);
+			MiniMap(g, MapRect(), s, aMapArena, v.mNow, aAlert && aMapArena == s.mTeam);
+			// Home under attack while you're looking at the rival's tank: a red banner.
+			if (aAlert)
+			{
+				Font* f = FONT_JUNGLEFEVER12OUTLINE;
+				int w = f != nullptr ? f->StringWidth(v.mAlert) : 200;
+				int a = (v.mNow / 250) % 2 == 0 ? 235 : 200;
+				g->SetColor(Color(150, 20, 20, a));
+				g->FillRect(kScreenW / 2 - w / 2 - 12, kTop + 34, w + 24, 24);
+				g->SetColor(Color(255, 150, 130, 230));
+				g->DrawRect(kScreenW / 2 - w / 2 - 12, kTop + 34, w + 23, 23);
+				Centered(g, f, v.mAlert, kScreenW / 2, kTop + 52, Color(255, 245, 235));
+			}
 
 			// A note (why something was refused, a tip...).
 			if (!v.mNote.empty() && !Elapsed(v.mNow, v.mNoteAt + 2500))
@@ -1187,7 +1297,7 @@ namespace Coop
 				if (AbilityRect(i).Contains(v.mMouseX, v.mMouseY))
 				{
 					const AbilityDef& ab = d.mAb[i];
-					std::string aTip = std::string(kKeys[i]) + " " + ab.mName + ": " + ab.mDesc;
+					std::string aTip = std::string(kAbilityKeys[i]) + " " + ab.mName + ": " + ab.mDesc;
 					Font* f = FONT_TINY;
 					int w = std::min(420, (f != nullptr ? f->StringWidth(aTip) : 200) + 12);
 					g->SetColor(Color(0, 0, 20, 220));
@@ -1266,7 +1376,7 @@ namespace Coop
 					aHover = aShop;
 				g->SetColor(aOver ? Color(50, 70, 110) : Color(22, 32, 56));
 				g->FillRect(r);
-				ShopIcon(g, aShop, r.mX + 23.0f, r.mY + 23.0f, 36, v.mNow);
+				ShopIcon(g, aShop, r.mX + 23.0f, r.mY + 23.0f, 36, v.mNow, std::min(s.mArena.mFoodQuality + 1, 2));
 				const ShopDef& sd = ShopDefOf(aShop);
 				Text(g, FONT_JUNGLEFEVER10OUTLINE, sd.mName, r.mX + 48, r.mY + 16, aCan ? Color(255, 255, 255) : Color(170, 170, 185));
 				int aPrice = s.Price(aShop);
@@ -1408,10 +1518,9 @@ namespace Coop
 				Text(g, FONT_TINY, d.mWalker ? "Walks the floor" : "Swims", r.mX + 6, y + 45, Color(200, 190, 255));
 				int ty = y + 57;
 				ty = Wrapped(g, FONT_TINY, std::string(d.mPassiveName) + ": " + d.mPassive, r.mX + 6, ty, r.mWidth - 12, Color(200, 230, 255));
-				static const char* kKeys[AB_COUNT] = { "Q", "W", "E", "R" };
 				for (int k = 0; k < AB_COUNT && ty < r.mY + r.mHeight - 6; k++)
 				{
-					Text(g, FONT_TINY, std::string(kKeys[k]) + " " + d.mAb[k].mName, r.mX + 6, ty, k == AB_R ? Color(255, 190, 120) : Color(235, 235, 245));
+					Text(g, FONT_TINY, std::string(kAbilityKeys[k]) + " " + d.mAb[k].mName, r.mX + 6, ty, k == AB_R ? Color(255, 190, 120) : Color(235, 235, 245));
 					ty += 10;
 				}
 				if (aHover && !aMine)
@@ -1441,7 +1550,8 @@ namespace Coop
 			g->SetColor(Color(0, 0, 0, 90));
 			g->FillRect(0, kTop, kScreenW, kHudY - kTop);
 			Centered(g, FONT_JUNGLEFEVER17OUTLINE, theSeconds > 0 ? std::to_string(theSeconds) : "GO!", kScreenW / 2, 220, Color(255, 225, 90));
-			Centered(g, FONT_JUNGLEFEVER10OUTLINE, "Right-click to move and attack  -  Q W E R abilities  -  B shop  -  Tab home  -  hold H: help", kScreenW / 2, 250, Color(230, 240, 255));
+			Centered(g, FONT_JUNGLEFEVER10OUTLINE, "WASD move  -  right-click attack  -  Q E R F abilities", kScreenW / 2, 250, Color(230, 240, 255));
+			Centered(g, FONT_JUNGLEFEVER10OUTLINE, "B shop  -  Tab home  -  hold H: help", kScreenW / 2, 266, Color(230, 240, 255));
 		}
 
 		void DrawHelp(Graphics* g, int theHero, bool theWaiting)
@@ -1460,12 +1570,13 @@ namespace Coop
 				int aBottom = Wrapped(g, FONT_TINY, theText, R.mX + 150, y - 8, R.mWidth - 168, t);
 				y = std::max(y + 20, aBottom + 12);
 			};
-			Line("Right-click", "Move there, or attack what's under the cursor. Hold it to keep moving.");
-			Line("Q W E R", "Your abilities, aimed at the mouse (R unlocks at level 5). Ctrl+Q/W/E: pick the next upgrade.");
+			Line("W A S D", "Move. Walkers (on the floor): A and D walk, W or Space hops over minions' bites, S near the portal's beam or a floor pad crosses.");
+			Line("Right-click", "Attack what's under the cursor, or move there (hold to keep moving).");
+			Line("Q E R F", "Your abilities, aimed at the mouse (F unlocks at level 5). Ctrl+Q/E/R: pick the next upgrade.");
 			Line("Left-click", "In your own tank: collect coins, drop food ($5), zap invaders with your laser.");
 			Line("1 2 3 4 / B", "Quick-buy a guppy, more food, a breeder, a carnivore. B opens the full shop: items, towers, minions.");
 			Line("Tab (hold)", "Look at your own tank while your hero is away.");
-			Line("The portal", "Top middle: cross to the rival's tank and back (walkers ride its beam from the floor). The floor pads in the corners go there too.");
+			Line("The portal", "Top middle: cross to the rival's tank and back (walkers: S near its beam). The floor pads in the corners go there too.");
 			Line("Win", "Minion waves attack the rival's towers every 30 s. Break both towers, then their treasure chest core.");
 			Line("Tips", "Feed your fish: they pay for everything. You're stronger in your own tank. Kelp hides you. Towers hurt: push with your minions.");
 			const HeroDef& h = HeroDefOf(theHero);
@@ -1474,16 +1585,15 @@ namespace Coop
 			y += 16;
 			Wrapped(g, FONT_TINY, std::string(h.mPassiveName) + ": " + h.mPassive, R.mX + 18, y, R.mWidth - 36, d);
 			y += 12;
-			static const char* kKeys[AB_COUNT] = { "Q", "W", "E", "R" };
 			for (int i = 0; i < AB_COUNT; i++)
 			{
-				Wrapped(g, FONT_TINY, std::string(kKeys[i]) + " " + h.mAb[i].mName + ": " + h.mAb[i].mDesc, R.mX + 18, y, R.mWidth - 36, i == AB_R ? Color(255, 200, 130) : d);
+				Wrapped(g, FONT_TINY, std::string(kAbilityKeys[i]) + " " + h.mAb[i].mName + ": " + h.mAb[i].mDesc, R.mX + 18, y, R.mWidth - 36, i == AB_R ? Color(255, 200, 130) : d);
 				y += 11;
 			}
 			Centered(g, FONT_JUNGLEFEVER10OUTLINE, theWaiting ? "Press any key or click to start!" : "Hold H to see this again.", kScreenW / 2, R.mY + R.mHeight - 10, Color(255, 225, 150));
 		}
 
-		static Rect ResultButtonRect() { return Rect(kScreenW / 2 - 90, 400, 180, 36); }
+		static Rect ResultButtonRect() { return Rect(kScreenW / 2 - 120, 400, 240, 36); }
 		int ResultHit(int x, int y) { return ResultButtonRect().Contains(x, y) ? 1 : 0; }
 
 		void DrawResult(Graphics* g, const ViewState& v, bool theWon, const std::string& theReason, uint32_t theMatchMs,
@@ -1526,7 +1636,7 @@ namespace Coop
 				Row("Fish lost", std::to_string(k.mFishLost));
 				Row("Money earned", "$" + std::to_string(k.mEarned));
 			}
-			Button(g, ResultButtonRect(), "Back to the menu", true, ResultButtonRect().Contains(v.mMouseX, v.mMouseY));
+			Button(g, ResultButtonRect(), "Back to the menu (Enter)", true, ResultButtonRect().Contains(v.mMouseX, v.mMouseY));
 		}
 	}
 }

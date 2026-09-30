@@ -89,8 +89,8 @@ namespace Heroes
 		int			mOwnerPlayer = 0;		// the owner's hero's player (rewards for defense)
 		bool		mOwnerHeroHere = false;	// the owner's hero is in this tank
 		Vec			mOwnerHeroPos;
-		bool		mScavenger = false;		// Stinky: collect coins he touches
-		bool		mGoldRush = false;		// Stinky's R: coins fly to him, fish drop double
+		bool		mScavenger = false;		// Speedy: collect coins he touches
+		bool		mGoldRush = false;		// Speedy's R: fish drop double, coins fly to him (away: to the wallet)
 		bool		mGrace = false;			// Angie: dead fish may come back
 		bool		mSuddenDeath = false;	// the core loses its armor
 	};
@@ -110,6 +110,10 @@ namespace Heroes
 		uint32_t	mNextLaser = 0;
 		int			mTowerLevel = 0;
 		int			mMoneyEarned = 0;
+		int			mCollectorLevel = 0;	// Stinky the pet: 0 none, 1, 2
+		Vec			mCollectorPos;
+		bool		mCollectorRight = true;
+		int			mMissedMoney = 0;		// banked from coins nobody took (stats)
 
 		std::vector<Fish>		mFish;
 		std::vector<Coin>		mCoins;

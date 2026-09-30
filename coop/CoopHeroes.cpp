@@ -15,6 +15,7 @@
 #include <SexyAppFramework/WidgetManager.h>
 #include <SexyAppFramework/KeyCodes.h>
 #include <SexyAppFramework/MusicInterface.h>
+#include <cstring>
 #include <SexyAppFramework/GLInterface.h>
 #include <SDL.h>
 #include <deque>
@@ -89,6 +90,7 @@ namespace Coop
 		uint32_t	mNoteAt = 0;
 		int			mShopTab = -1;
 		bool		mTabHome = false, mCtrl = false;
+		bool		mHeld[4] = { false, false, false, false };	// W A S D
 		int			mAimSlot = -1;				// armed by clicking the ability on the HUD
 		bool		mRightDown = false;
 		uint32_t	mLastDragOrder = 0;
@@ -98,6 +100,12 @@ namespace Coop
 		uint32_t	mMatchMs = 0;
 		bool		mSudden = false;
 		std::string	mNames[kMaxPlayers];
+		// Home alerts (D30): what we last saw of home, and the current alert.
+		float		mSeenTowerHp[2] = { 0, 0 }, mSeenCoreHp = 0;
+		int			mSeenBitten = 0, mSeenKilled = 0, mSeenStarved = 0;
+		bool		mSeenHeroHome = false;
+		std::string	mAlert;
+		uint32_t	mAlertAt = 0, mAlarmAt = 0;
 		bool		mHelpHeld = false;			// H
 		bool		mHelpIntro = false;			// the card before a first practice (the countdown waits)
 		bool		mHelpSeen = false;
@@ -118,8 +126,40 @@ namespace Coop
 		gH.mNoteAt = Now();
 	}
 
+	static int HeldIndex(KeyCode theKey)
+	{
+		switch (theKey)
+		{
+		case 'W': return 0;
+		case 'A': return 1;
+		case 'S': return 2;
+		case 'D': return 3;
+		default: return -1;
+		}
+	}
+
+	static void ReleaseKeys()
+	{
+		for (bool& b : gH.mHeld)
+			b = false;
+	}
+
+	// One tune at a time: the game's songs are separate tracks, so stop the others first
+	// (else the menu, match and sudden-death music play on top of each other).
+	static void Music(int theSong, int theOffset)
+	{
+		WinFishApp* anApp = App();
+		if (anApp == nullptr)
+			return;
+		anApp->mMusicInterface->StopAllMusic();
+		anApp->PlayMusic(theSong, theOffset);
+	}
+
 	static void SetPhase(HeroesPhase thePhase)
 	{
+		ReleaseKeys();
+		gH.mAlert.clear();
+		gH.mAlarmAt = 0;
 		gH.mPhase = thePhase;
 		gH.mPhaseAt = Now();
 	}
@@ -179,6 +219,8 @@ namespace Coop
 			for (int i = 0; i < kMaxPlayers; i++)
 				v.mNames[i] = gH.mNames[i];
 			v.mAimSlot = gH.mAimSlot;
+			v.mAlert = gH.mAlert;
+			v.mAlertAt = gH.mAlertAt;
 			// Notes are timed on the real clock; the drawing code compares with v.mNow.
 			if (v.mSide != nullptr)
 				v.mNoteAt = v.mNow - std::min<uint32_t>(Now() - gH.mNoteAt, 100000);
@@ -502,7 +544,9 @@ namespace Coop
 			}
 			if (gH.mPhase == HP_RESULT)
 			{
-				if (theKey == KEYCODE_RETURN || theKey == KEYCODE_ESCAPE || theKey == KEYCODE_SPACE)
+				// Only Enter (or the button): Space hops and Esc gives up, so mashing either
+				// as the match ends shouldn't close the results unread.
+				if (theKey == KEYCODE_RETURN)
 					CloseScreen();
 				return;
 			}
@@ -533,15 +577,33 @@ namespace Coop
 			}
 			if (gH.mPhase != HP_MATCH)
 				return;
+			if (theKey == KEYCODE_SPACE)
+			{
+				if (s->mHero.Def().mWalker)
+					s->Hop();						// Space hops too (walkers)
+				return;
+			}
+			int aHeld = HeldIndex(theKey);
+			if (aHeld >= 0)
+			{
+				gH.mHeld[aHeld] = true;
+				if (s->mHero.Def().mWalker && !gH.mCtrl)
+				{
+					if (theKey == 'W')
+						s->Hop();
+					else if (theKey == 'S' && !s->CrossNearby() && !s->mLastRefusal.empty())
+						Note(s->mLastRefusal);
+				}
+				return;
+			}
 			int aSlot = -1;
 			switch (theKey)
 			{
 			case 'Q': aSlot = AB_Q; break;
-			case 'W': aSlot = AB_W; break;
-			case 'E': aSlot = AB_E; break;
-			case 'R': aSlot = AB_R; break;
+			case 'E': aSlot = AB_W; break;
+			case 'R': aSlot = AB_E; break;
+			case 'F': aSlot = AB_R; break;
 			case 'B': gH.mShopTab = gH.mShopTab >= 0 ? -1 : TAB_FISH; return;
-			case 'S': s->OrderStop(); return;
 			default: break;
 			}
 			if (theKey >= '1' && theKey <= '0' + HV::kQuickSlots)
@@ -563,12 +625,21 @@ namespace Coop
 			CastAt(aSlot, aAim);
 		}
 
+		virtual void LostFocus() override
+		{
+			Widget::LostFocus();
+			ReleaseKeys();					// no key stuck down after switching windows
+		}
+
 		virtual void KeyUp(KeyCode theKey) override
 		{
 			if (theKey == KEYCODE_CONTROL)
 				gH.mCtrl = false;
 			if (theKey == KEYCODE_TAB)
 				gH.mTabHome = false;
+			int aHeld = HeldIndex(theKey);
+			if (aHeld >= 0)
+				gH.mHeld[aHeld] = false;
 			if (theKey == 'H')
 				gH.mHelpHeld = false;
 		}
@@ -658,13 +729,15 @@ namespace Coop
 		gH.mStatus.clear();
 		gH.mMyHero = -1;
 		gH.mTheirHero = -1;
-		anApp->PlayMusic(2, 0);
+		Music(2, 0);
 	}
 
 	static void CloseScreen()
 	{
 		WinFishApp* anApp = App();
 		bool aNetwork = !gH.mPractice;
+		if (gH.mPhase == HP_MATCH || gH.mPhase == HP_COUNTDOWN)
+			Music(2, 0);					// left mid-match: back to the menu's music
 		SetPhase(HP_IDLE);
 		gH.mMatch.reset();
 		gH.mNetSide.reset();
@@ -728,7 +801,7 @@ namespace Coop
 		gH.mHelpIntro = !gH.mHelpSeen && getenv("INSANIQ_TESTSCRIPT") == nullptr;
 		gH.mHelpSeen = true;
 		HV::PlaySound(SND_ALARM);
-		App()->PlayMusic(0, 13);
+		Music(0, 13);
 	}
 
 	static void Finish(bool theWon, const std::string& theReason)
@@ -739,6 +812,7 @@ namespace Coop
 		gH.mMatchMs = s != nullptr ? s->MatchMs() : 0;
 		gH.mShopTab = -1;
 		SetPhase(HP_RESULT);
+		Music(2, 0);						// the match (or sudden death) music stops
 		if (App() != nullptr)
 			App()->PlaySample(theWon ? SOUND_APPLAUSE_ID : SOUND_EVILLAFF_ID);
 		S().Log("Heroes: match over, %s (%s) after %u s", theWon ? "won" : "lost", theReason.c_str(), gH.mMatchMs / 1000);
@@ -746,9 +820,27 @@ namespace Coop
 			fprintf(stderr, "[test] heroesevent %u finish won=%d\n", SDL_GetTicks(), theWon ? 1 : 0);
 	}
 
+	// WASD: the held keys steer my hero (walkers use only A and D; W hops, S crosses).
+	static void SteerFromKeys()
+	{
+		Side* s = MySide();
+		if (s == nullptr || gH.mBotMine)
+			return;
+		Vec aDir;
+		if (gH.mPhase == HP_MATCH && !gH.mPaused)
+		{
+			bool aWalker = s->mHero.Def().mWalker;
+			aDir.x = (gH.mHeld[3] ? 1.0f : 0.0f) - (gH.mHeld[1] ? 1.0f : 0.0f);
+			if (!aWalker)
+				aDir.y = (gH.mHeld[2] ? 1.0f : 0.0f) - (gH.mHeld[0] ? 1.0f : 0.0f);
+		}
+		s->Steer(aDir);
+	}
+
 	static void Tick()
 	{
 		gH.mSimNow += kTickMs;
+		SteerFromKeys();
 		if (gH.mMatch)
 		{
 			if (gH.mBotMine)
@@ -798,6 +890,57 @@ namespace Coop
 			gH.mLastSeq = std::max(gH.mLastSeq, s->mEffects.back().mSeq);
 	}
 
+	// While you look at the rival's tank, say what's hurting at home (a banner, the home
+	// mini-map flashing, an alarm at most every 8 s). What's worse wins: the core, a tower,
+	// the enemy hero, fish eaten, fish starving.
+	static void CheckHomeAlerts()
+	{
+		Side* s = MySide();
+		if (s == nullptr)
+			return;
+		const Arena& a = s->mArena;
+		HeroSnap o;
+		bool aHeroHome = s->OtherHeroIn(s->mTeam, &o) && (o.mFlags & HF_ALIVE) && !(o.mFlags & HF_HIDDEN);
+		std::string aAlert;
+		if (a.mCoreHp < gH.mSeenCoreHp - 0.5f)
+			aAlert = "Your core is under attack!";
+		else if (a.mTower[0].mAlive && a.mTower[0].mHp < gH.mSeenTowerHp[0] - 0.5f)
+			aAlert = "Your left tower is under attack!";
+		else if (a.mTower[1].mAlive && a.mTower[1].mHp < gH.mSeenTowerHp[1] - 0.5f)
+			aAlert = "Your right tower is under attack!";
+		else if (aHeroHome && !gH.mSeenHeroHome)
+			aAlert = "The enemy hero is in your tank!";
+		else if (a.mFishBitten > gH.mSeenBitten || a.mFishKilled > gH.mSeenKilled)
+			aAlert = "Your fish are being eaten!";
+		else if (a.mStarved > gH.mSeenStarved)
+			aAlert = "Your fish are starving!";
+		gH.mSeenTowerHp[0] = a.mTower[0].mHp;
+		gH.mSeenTowerHp[1] = a.mTower[1].mHp;
+		gH.mSeenCoreHp = a.mCoreHp;
+		gH.mSeenBitten = a.mFishBitten;
+		gH.mSeenKilled = a.mFishKilled;
+		gH.mSeenStarved = a.mStarved;
+		gH.mSeenHeroHome = aHeroHome;
+		if (aAlert.empty() || ViewedArena() == s->mTeam)
+			return;								// you can see it for yourself
+		uint32_t aNow = s->mNow;
+		// Keep showing the worse alert while it's fresh.
+		static const char* kOrder[] = { "Your core", "Your left", "Your right", "The enemy", "Your fish are being", "Your fish are starving" };
+		auto Rank = [](const std::string& t) { for (int i = 0; i < 6; i++) if (t.compare(0, std::strlen(kOrder[i]), kOrder[i]) == 0) return i; return 9; };
+		if (gH.mAlert.empty() || Elapsed(aNow, gH.mAlertAt + HV::kAlertShowMs) || Rank(aAlert) <= Rank(gH.mAlert))
+		{
+			gH.mAlert = aAlert;
+			gH.mAlertAt = aNow;
+		}
+		if (gH.mAlarmAt == 0 || Elapsed(aNow, gH.mAlarmAt + 8000))
+		{
+			gH.mAlarmAt = aNow;
+			HV::PlaySound(SND_ALARM);
+			if (getenv("INSANIQ_TESTSCRIPT") != nullptr)
+				fprintf(stderr, "[test] heroesalert %s\n", aAlert.c_str());
+		}
+	}
+
 	void HeroesUpdate()
 	{
 		if (gH.mPhase == HP_IDLE)
@@ -828,13 +971,14 @@ namespace Coop
 				n++;
 			}
 			PlayNewSounds();
+			CheckHomeAlerts();
 			Side* s = MySide();
 			if (s != nullptr)
 			{
 				if (s->mSuddenDeath && !gH.mSudden)
 				{
 					gH.mSudden = true;
-					App()->PlayMusic(1, 1);
+					Music(1, 1);
 					Note("Sudden death: waves grow every minute and the cores lose their armor!");
 				}
 				if (s->mWon)
@@ -914,7 +1058,7 @@ namespace Coop
 		gH.mSudden = false;
 		SetPhase(HP_COUNTDOWN);
 		HV::PlaySound(SND_ALARM);
-		App()->PlayMusic(0, 13);
+		Music(0, 13);
 		S().Log("Heroes %u: %s vs %s", gH.mMatchId, HeroDefOf(theHostHero).mName, HeroDefOf(theGuestHero).mName);
 	}
 
@@ -1036,7 +1180,15 @@ namespace Coop
 			gH.mPhase, s->MatchMs() / 1000, HeroDefOf(s->mHero.mHero).mName, s->mHero.mLevel, s->mHero.mHp, s->mHero.mArena, s->mArena.mMoney,
 			s->mArena.FishCount(), s->mArena.mTower[0].mHp, s->mArena.mTower[1].mHp, s->mArena.mCoreHp, s->mHero.mKills, s->mHero.mDeaths,
 			o ? HeroDefOf(o->mHero.mHero).mName : "?", o ? o->mHero.mLevel : 0, o ? o->mArena.mTower[0].mHp : 0, o ? o->mArena.mTower[1].mHp : 0, o ? o->mArena.mCoreHp : 0);
-		return b;
+		std::string r = b;
+		if (App() != nullptr && App()->mMusicInterface != nullptr)
+		{
+			r += " music";						// which song tracks are playing (one at a time)
+			for (int i = 0; i < 5; i++)
+				if (App()->mMusicInterface->IsPlaying(i))
+					r += " " + std::to_string(i);
+		}
+		return r;
 	}
 
 	bool HeroesTestPick(int theHero)

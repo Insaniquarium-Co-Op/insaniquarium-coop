@@ -208,15 +208,20 @@ Matches run 15-20 minutes. Hold **H** in a match for the controls.
 | **Clyde** (jellyfish) | Mage: zaps from range, slowing fields, teleports | Thunderstorm: lightning hits every enemy in the tank |
 | **Rhubarb** (hermit crab) | Tank: leaps in, grabs, stuns | Tidal Slam: stuns and knocks back everything nearby |
 | **Angie** (angelfish) | Support: heals and shields you, towers and the core, charms minions | Resurrection: revives dead fish, heals towers and herself |
-| **Stinky** (snail) | Farmer: collects coins, slows, gasses towers | Gold Rush: double coins that fly to him |
+| **Speedy** (neon snail) | Farmer: collects coins, slows, gasses towers | Gold Rush: double coins that fly to him (or home while he's away) |
 
-- **Right-click** to move or attack (hold to keep moving). **Q W E R** abilities, aimed
-  at the mouse. **Ctrl+Q/W/E** picks the next upgrade when you level up.
+- **W A S D** to move. Speedy and Rhubarb walk the floor: **A/D** walk, **W** or **Space** hops
+  (minions' bites miss you in the air), **S** near the portal's beam or a floor pad
+  crosses. **Right-click** an enemy to attack it (or the ground to move there).
+  **Q E R** abilities and **F** the ultimate, aimed at the mouse. **Ctrl+Q/E/R** picks
+  the next upgrade when you level up.
 - **Left-click** in your own tank: collect coins, drop food ($5), zap invaders with your
-  laser. **1-4** quick-buy (guppy, more food, breeder, carnivore); **B** opens the shop
+  laser. Coins you miss still pay half as they sink; **Stinky** (a pet in the shop's
+  Upgrades) collects coins from the floor for you. While you're in the rival's tank, a red
+  banner and an alarm tell you when home is under attack. **1-4** quick-buy (guppy, more food, breeder, carnivore); **B** opens the shop
   (fish, upgrades, hero items, towers, minions). **Tab** (hold) looks at your tank while
   your hero is away.
-- **The portal** (top middle) takes you to the rival's tank and back; Stinky and Rhubarb
+- **The portal** (top middle) takes you to the rival's tank and back; Speedy and Rhubarb
   walk under it and ride its beam. The floor pads in the corners go there too. After
   crossing you can't cross back for 8 s.
 - Every 30 s a wave of mini Sylvesters goes through each portal at the other's two

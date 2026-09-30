@@ -73,7 +73,8 @@ namespace Heroes
 			w.F32(v.mTowerShield[i]);
 		}
 		w.F32(v.mTowerMax); w.U8(v.mTowerLevel); w.U8(v.mTowerBlind);
-		w.F32(v.mCoreHp); w.F32(v.mCoreShield); w.U16(v.mFishCount);
+		w.F32(v.mCoreHp); w.F32(v.mCoreShield); w.U16(v.mFishCount); w.U8(v.mFoodQuality);
+		w.U8(v.mCollectorLevel); PutPosQ(w, v.mCollectorPos); w.U8(v.mCollectorRight ? 1 : 0);
 		w.U16((uint16_t)v.mFish.size());
 		for (const FishSnap& f : v.mFish) { w.U32(f.mId); w.U8(f.mKind); w.U8(f.mSize); w.U8(f.mFlags); PutPosQ(w, f.mPos); }
 		w.U16((uint16_t)v.mCoins.size());
@@ -93,7 +94,8 @@ namespace Heroes
 			v.mTowerShield[i] = r.F32();
 		}
 		v.mTowerMax = r.F32(); v.mTowerLevel = r.U8(); v.mTowerBlind = r.U8();
-		v.mCoreHp = r.F32(); v.mCoreShield = r.F32(); v.mFishCount = r.U16();
+		v.mCoreHp = r.F32(); v.mCoreShield = r.F32(); v.mFishCount = r.U16(); v.mFoodQuality = r.U8();
+		v.mCollectorLevel = r.U8(); v.mCollectorPos = GetPosQ(r); v.mCollectorRight = r.U8() != 0;
 		size_t n = r.U16();
 		for (size_t i = 0; i < n && !r.mBad; i++) { FishSnap f; f.mId = r.U32(); f.mKind = r.U8(); f.mSize = r.U8(); f.mFlags = r.U8(); f.mPos = GetPosQ(r); v.mFish.push_back(f); }
 		n = r.U16();

@@ -122,6 +122,7 @@ namespace Heroes
 		int			mThunderLeft = 0;
 		uint32_t	mThunderNext = 0;
 		uint32_t	mLeapStart = 0, mLeapUntil = 0;
+		uint32_t	mHopStart = 0, mHopUntil = 0, mHopReadyAt = 0;	// walkers' W
 		Vec			mLeapFrom, mLeapTo;
 		uint32_t	mDashUntil = 0;
 		Vec			mDashDir;
@@ -178,6 +179,9 @@ namespace Heroes
 		void		OrderMove(Vec theWhere);
 		void		OrderAttack(const EntityRef& theTarget);
 		void		OrderStop();
+		void		Steer(Vec theDir);					// WASD, every tick (zero: no keys held); cancels orders
+		bool		Hop();								// walkers: W
+		bool		CrossNearby();						// walkers: S near the portal's beam or a pad
 		bool		Cast(int theSlot, Vec theAim);
 		bool		CanCast(int theSlot, std::string* theWhy = nullptr) const;
 		bool		SpendPoint(int theSlot);
@@ -202,6 +206,7 @@ namespace Heroes
 		bool		Stunned() const { return (int32_t)(mNow - mHero.mStunUntil) < 0; }
 		uint32_t	WarpSicknessLeft() const { return (int32_t)(mNow - mHero.mCrossReadyAt) >= 0 ? 0 : mHero.mCrossReadyAt - mNow; }
 		bool		Busy() const;						// dashing or leaping
+		bool		Hopping() const;					// a walker in the air (W)
 
 		// ---- what's around ----
 		// Everything targetable in that tank. Gameplay uses the newest positions; the screen
@@ -243,11 +248,15 @@ namespace Heroes
 		void		AttackLanded(const Target& t, float theDamage, bool theChain);
 		Vec			SpawnPoint() const;
 
+		void		StepSteer(float theDt);
+
+		Vec			mSteer;
+		float		mSlideSide = 1;					// which way WASD slides around a wall
 		std::vector<std::pair<EntityRef, Hit>>	mOutHits;
 		std::vector<Reward>		mOutRewards;
 		std::vector<Event>		mOutEvents;
 		uint32_t	mLastHeroSent = 0, mLastArenaSent = 0, mLastStep = 0;
-		float		mStinkyGold = 0;
+		float		mPassiveGold = 0;
 		uint32_t	mLastAlarm = 0;
 	};
 }

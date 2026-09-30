@@ -73,7 +73,7 @@ namespace Heroes
 			{ AB_Q, AB_W, AB_Q, AB_E, AB_W, AB_Q, AB_W, AB_E, AB_E },
 		},
 		{
-			"Stinky", "Farmer", "A snail who hoovers up coins, spits slime, slimes the floor and gasses towers.",
+			"Speedy", "Farmer", "A neon snail who hoovers up coins, spits slime, slimes the floor and gasses towers.",
 			true, 680, 32, 230, 170, 1.1f, 34, 520,
 			"Scavenger", "Collects your coins he touches, and +$1 per second.",
 			{
@@ -83,8 +83,8 @@ namespace Heroes
 				{ "Stink Cloud", "A cloud that hurts enemies and stops towers inside it from shooting.", 12, AIM_POINT, 300, 35, 140, 3, 0 },
 				// Shell Up: immune for mDurationS.
 				{ "Shell Up", "Hide in your shell: immune for 2 s.", 15, AIM_SELF, 0, 0, 0, 2, 0 },
-				// Gold Rush: for mDurationS your fish drop double coins and every coin flies to you.
-				{ "Gold Rush", "For 8 s your fish drop double coins and every coin flies to you.", 75, AIM_SELF, 0, 0, 0, 8, 0 },
+				// Gold Rush: for mDurationS your fish drop double coins and every coin flies to you (away: into the wallet).
+				{ "Gold Rush", "For 8 s your fish drop double coins and every coin in your tank flies to you (or, while you're away, into your wallet).", 75, AIM_SELF, 0, 0, 0, 8, 0 },
 			},
 			{ AB_W, AB_Q, AB_W, AB_E, AB_W, AB_Q, AB_Q, AB_E, AB_E },
 		},
@@ -182,6 +182,7 @@ namespace Heroes
 			gShop[SHOP_FOOD_QUALITY] = { TAB_UPGRADES, "Food Quality", "Pellets feed more: fish grow faster and stay fed longer." };
 			gShop[SHOP_FOOD_COUNT] = { TAB_UPGRADES, "Food Quantity", "One more pellet can be in the water at once." };
 			gShop[SHOP_LASER] = { TAB_UPGRADES, "Laser", "Your clicks hit aliens (and the enemy hero) harder." };
+			gShop[SHOP_COLLECTOR] = { TAB_UPGRADES, "Stinky", "A pet snail that crawls the floor collecting coins for you. Level 2: twice as fast." };
 			for (int i = 0; i < ITEM_COUNT; i++)
 				gShop[SHOP_ITEM_FIRST + i] = { TAB_HERO, ItemDefOf(i).mName, ItemDefOf(i).mDesc };
 			gShop[SHOP_REPAIR_LEFT] = { TAB_TOWERS, "Repair Left Tower", "+500 health (not while it's under attack)." };

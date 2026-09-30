@@ -155,22 +155,26 @@ fish first).
       and no money for a baby. Esc twice gives up the round.
 
 
-PET HEROES (new in 2.0)
+PET HEROES (new in 2.0; WASD and farming help in 2.2)
 -----------------------
 A MOBA on two tanks. Each of you keeps your own tank (twice the usual size)
 and plays one pet as a hero: Itchy (assassin), Clyde (mage), Rhubarb (tank),
-Angie (support) or Stinky (farmer). Break your friend's treasure-chest core
+Angie (support) or Speedy (farmer). Break your friend's treasure-chest core
 to win. Host: VERSUS! > Pet Heroes > Start Match!, then both pick a hero and
 "Lock in!". Practice against the bot from the Co-op window. Hold H in a match
 for the controls.
 
-* Right-click: move or attack (hold to keep moving). Q W E R: abilities at
-  the mouse (R at level 5). Ctrl+Q/W/E: pick your next upgrade.
-* Left-click in your own tank: coins, food ($5), laser. 1-4: quick-buy
+* W A S D: move. Speedy and Rhubarb walk the floor: A/D walk, W or Space hops
+  (minions' bites miss you in the air), S near the portal's beam or a floor
+  pad crosses. Right-click: attack (or move there). Q E R: abilities at the
+  mouse, F: the ultimate (level 5). Ctrl+Q/E/R: pick your next upgrade.
+* Left-click in your own tank: coins, food ($5), laser. Missed coins pay
+  half; Stinky (a pet in the shop) collects coins for you. A red banner
+  warns you when home is under attack while you're away. 1-4: quick-buy
   (guppy, more food, breeder, carnivore). B: the shop (items, towers,
   minions). Tab (hold): look at your tank while your hero is away.
-* The portal (top middle) goes to your friend's tank and back; Stinky and
-  Rhubarb ride its beam from the floor. The corner floor pads go there too.
+* The portal (top middle) goes to your friend's tank and back; Speedy and
+  Rhubarb ride its beam from the floor (S). The corner floor pads go there too.
   After crossing you can't cross back for 8 s.
 * Every 30 s mini Sylvesters come through each portal at the other's two
   towers (giant clams). Break both towers, then the core. Towers shrug off a

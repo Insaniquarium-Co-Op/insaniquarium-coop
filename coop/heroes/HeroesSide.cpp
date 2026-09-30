@@ -62,6 +62,8 @@ namespace Heroes
 		Blend(s.mCoins, aOld.mSnap.mCoins, t);
 		Blend(s.mFood, aOld.mSnap.mFood, t);
 		Blend(s.mMinions, aOld.mSnap.mMinions, t);
+		if (aOld.mSnap.mCollectorLevel > 0)
+			s.mCollectorPos = Lerp(aOld.mSnap.mCollectorPos, s.mCollectorPos, t);
 		return s;
 	}
 
@@ -164,6 +166,7 @@ namespace Heroes
 	float Side::Lifesteal() const { return SumItems(mHero, [](const ItemDef& d) { return d.mLifestealPct; }); }
 	uint32_t Side::CooldownLeft(int theSlot) const { return Elapsed(mNow, mHero.mReadyAt[theSlot]) ? 0 : mHero.mReadyAt[theSlot] - mNow; }
 	bool Side::Busy() const { return !Elapsed(mNow, mHero.mDashUntil) || !Elapsed(mNow, mHero.mLeapUntil); }
+	bool Side::Hopping() const { return !Elapsed(mNow, mHero.mHopUntil); }
 
 	///////////////////////////////////////////////////////////////////////////
 	// Step
@@ -190,13 +193,13 @@ namespace Heroes
 		StepZones();
 		StepArena();
 
-		// Passive income: items, and Stinky's Scavenger.
-		float aGold = SumItems(mHero, [](const ItemDef& d) { return d.mGoldPerS; }) + (mHero.mHero == HERO_STINKY ? 1.0f : 0.0f);
-		mStinkyGold += aGold * dt;
-		if (mStinkyGold >= 1)
+		// Passive income: items, and Speedy's Scavenger.
+		float aGold = SumItems(mHero, [](const ItemDef& d) { return d.mGoldPerS; }) + (mHero.mHero == HERO_SPEEDY ? 1.0f : 0.0f);
+		mPassiveGold += aGold * dt;
+		if (mPassiveGold >= 1)
 		{
-			int n = (int)mStinkyGold;
-			mStinkyGold -= n;
+			int n = (int)mPassiveGold;
+			mPassiveGold -= n;
 			mArena.Earn(n, Vec(), false);
 		}
 		if (mHero.mAlive)
@@ -220,8 +223,8 @@ namespace Heroes
 		c.mOwnerPlayer = mPlayer;
 		c.mOwnerHeroHere = mHero.mAlive && mHero.mArena == mTeam;
 		c.mOwnerHeroPos = mHero.mPos;
-		c.mScavenger = mHero.mHero == HERO_STINKY;
-		c.mGoldRush = mHero.mHero == HERO_STINKY && !Elapsed(mNow, mHero.mGoldRushUntil);
+		c.mScavenger = mHero.mHero == HERO_SPEEDY;
+		c.mGoldRush = mHero.mHero == HERO_SPEEDY && !Elapsed(mNow, mHero.mGoldRushUntil);
 		c.mGrace = mHero.mHero == HERO_ANGIE;
 		c.mSuddenDeath = mSuddenDeath;
 		if (c.mOwnerHeroHere)
@@ -507,6 +510,12 @@ namespace Heroes
 				Text(h.mArena, h.mPos - Vec(0, 50), "Immune", TC_INFO);
 			return;
 		}
+		if (Hopping() && (theHit.mSource == SRC_MINION || (theHit.mSource == SRC_ZONE && theHit.mSlowMs > 0)))
+		{
+			if (theHit.mDamage > 0)
+				Text(h.mArena, h.mPos - Vec(0, 50), "Dodged", TC_INFO);
+			return;								// minion attacks and slowing ground miss a hopping walker
+		}
 		if (theHit.mPlayer >= 0)
 			mHurtByAt[theHit.mPlayer % kMaxPlayers] = mNow;
 		if (theHit.mStunMs > 0)
@@ -557,7 +566,7 @@ namespace Heroes
 		h.mRespawnAt = mNow + (uint32_t)(RespawnS(h.mLevel) * 1000);
 		h.mOrder = HeroState::ORD_IDLE;
 		h.mPath.clear();
-		h.mStormUntil = h.mSlimeUntil = h.mHealUntil = h.mDashUntil = h.mLeapUntil = 0;
+		h.mStormUntil = h.mSlimeUntil = h.mHealUntil = h.mDashUntil = h.mLeapUntil = h.mHopUntil = 0;
 		h.mThunderLeft = 0;
 		Reward r;
 		r.mPlayer = theKiller.mPlayer;
@@ -889,6 +898,7 @@ namespace Heroes
 		case SHOP_FOOD_QUALITY: return a.mFoodQuality < 2 ? kFoodQualityPrice[a.mFoodQuality] : 0;
 		case SHOP_FOOD_COUNT: return kFoodCountPrice;
 		case SHOP_LASER: return LaserUpgradePrice(a.mLaserLevel);
+		case SHOP_COLLECTOR: return a.mCollectorLevel < 2 ? kCollectorPrice[a.mCollectorLevel] : 0;
 		case SHOP_REPAIR_LEFT:
 		case SHOP_REPAIR_RIGHT: return TowerRepairPrice();
 		case SHOP_TOWER_UPGRADE: return TowerUpgradePrice(a.mTowerLevel);
@@ -912,6 +922,7 @@ namespace Heroes
 		case SHOP_FOOD_QUALITY: return mArena.mFoodQuality;
 		case SHOP_FOOD_COUNT: return mArena.mPellets;
 		case SHOP_LASER: return mArena.mLaserLevel;
+		case SHOP_COLLECTOR: return mArena.mCollectorLevel;
 		case SHOP_TOWER_UPGRADE: return mArena.mTowerLevel;
 		case SHOP_WAVE_SIZE: return mWaveSizeRank;
 		case SHOP_WAVE_TOUGH: return mWaveToughRank;
@@ -950,6 +961,7 @@ namespace Heroes
 		case SHOP_FOOD_QUALITY: if (a.mFoodQuality >= 2) return No("Food quality is maxed."); break;
 		case SHOP_FOOD_COUNT: if (a.mPellets >= kMaxPellets) return No("Food quantity is maxed."); break;
 		case SHOP_LASER: if (a.mLaserLevel >= kLaserLevels - 1) return No("Your laser is maxed."); break;
+		case SHOP_COLLECTOR: if (a.mCollectorLevel >= 2) return No("Stinky is as fast as he gets."); break;
 		case SHOP_REPAIR_LEFT: case SHOP_REPAIR_RIGHT:
 		{
 			const Tower& t = a.mTower[theShop == SHOP_REPAIR_LEFT ? 0 : 1];
@@ -1005,6 +1017,7 @@ namespace Heroes
 		case SHOP_FOOD_QUALITY: a.mFoodQuality++; break;
 		case SHOP_FOOD_COUNT: a.mPellets++; break;
 		case SHOP_LASER: a.mLaserLevel++; break;
+		case SHOP_COLLECTOR: a.mCollectorLevel++; break;
 		case SHOP_REPAIR_LEFT: case SHOP_REPAIR_RIGHT:
 		{
 			Hit h;

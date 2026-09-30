@@ -12,7 +12,7 @@ namespace Heroes
 		{ ITEM_PEARL_CHARM, ITEM_THICK_SHELL, ITEM_SHARP_FIN, ITEM_PEARL_CHARM, ITEM_TOWER_BUSTER, ITEM_GOLDEN_SCALE },	// Clyde
 		{ ITEM_THICK_SHELL, ITEM_CORAL_ARMOR, ITEM_TOWER_BUSTER, ITEM_THICK_SHELL, ITEM_SHARP_FIN, ITEM_LEECH_TOOTH },	// Rhubarb
 		{ ITEM_PEARL_CHARM, ITEM_THICK_SHELL, ITEM_GOLDEN_SCALE, ITEM_CORAL_ARMOR, ITEM_PEARL_CHARM, ITEM_SHARP_FIN },	// Angie
-		{ ITEM_GOLDEN_SCALE, ITEM_THICK_SHELL, ITEM_TOWER_BUSTER, ITEM_CORAL_ARMOR, ITEM_SHARP_FIN, ITEM_SPEED_KELP },	// Stinky
+		{ ITEM_GOLDEN_SCALE, ITEM_THICK_SHELL, ITEM_TOWER_BUSTER, ITEM_CORAL_ARMOR, ITEM_SHARP_FIN, ITEM_SPEED_KELP },	// Speedy
 	};
 
 	void Bot::Think(Side& s)
@@ -27,7 +27,7 @@ namespace Heroes
 		}
 		if (Elapsed(s.mNow, mNextThink))
 		{
-			mNextThink = s.mNow + 250;
+			mNextThink = s.mNow + (mSkill == 0 ? 600 : 250);	// Easy reacts to fights later
 			Fight(s);
 		}
 	}
@@ -39,10 +39,20 @@ namespace Heroes
 	{
 		if (!Elapsed(s.mNow, mNextClick))
 			return;
-		// A person splits attention: fewer farm clicks while the hero fights or is away.
-		static const uint32_t kPeriod[3] = { 650, 450, 320 };
-		uint32_t aPeriod = kPeriod[std::clamp(mSkill, 0, 2)];
-		if (s.mHero.mArena != s.mTeam || s.mHero.mOrder == HeroState::ORD_ATTACK)
+		// It only farms what it's looking at, like a person (D30). While its hero is in the
+		// rival's tank, the screen follows the hero: it farms only during short glances home
+		// (holding Tab): Normal 1.5 s every 8 s, Hard 1.5 s every 5 s, Easy never.
+		int aSkill = std::clamp(mSkill, 0, 2);
+		if (s.mHero.mAlive && s.mHero.mArena != s.mTeam)
+		{
+			static const uint32_t kGlanceEvery[3] = { 0, 8000, 5000 };
+			if (kGlanceEvery[aSkill] == 0 || s.MatchMs() % kGlanceEvery[aSkill] >= 1500)
+				return;
+		}
+		// A person splits attention: fewer farm clicks while the hero fights.
+		static const uint32_t kPeriod[3] = { 800, 450, 320 };
+		uint32_t aPeriod = kPeriod[aSkill];
+		if (s.mHero.mOrder == HeroState::ORD_ATTACK)
 			aPeriod = aPeriod * 2;
 		mNextClick = s.mNow + aPeriod;
 		Arena& a = s.mArena;
@@ -159,6 +169,7 @@ namespace Heroes
 			{ aFish < 3, SHOP_GUPPY },
 			{ aFish < 4 && aMin < 3, SHOP_GUPPY },
 			{ aFish >= 4 && a.mFoodQuality == 0, SHOP_FOOD_QUALITY },
+			{ aFish >= 4 && a.mCollectorLevel == 0, SHOP_COLLECTOR },
 			{ aItems < 1 && aMin > 2, Item(0) },
 			{ aFish < 6, SHOP_GUPPY },
 			{ aItems < 1, Item(0) },
@@ -168,6 +179,7 @@ namespace Heroes
 			{ aFish < 9, SHOP_GUPPY },
 			{ aFish >= 8 && aCarnivores == 0, SHOP_CARNIVORE },
 			{ aItems < 3, Item(2) },
+			{ a.mCollectorLevel < 2, SHOP_COLLECTOR },
 			{ aMin > 6 && s.mWaveSizeRank < 1, SHOP_WAVE_SIZE },
 			{ aItems < 4, Item(3) },
 			{ a.mFoodQuality < 2, SHOP_FOOD_QUALITY },
@@ -187,6 +199,8 @@ namespace Heroes
 				continue;
 			if (!Wants(st.mShop))
 				continue;						// maxed or impossible: skip it
+			if (mSkill == 0 && st.mShop >= SHOP_ITEM_FIRST && st.mShop <= SHOP_ITEM_LAST && aMin < 4 + 2 * aItems)
+				continue;						// Easy buys hero items later
 			Try(st.mShop);
 			return;								// saving up for this one
 		}
@@ -265,7 +279,7 @@ namespace Heroes
 				aNear.push_back(t);
 
 		// Retreat when hurt; go back out once healed.
-		if (aHpFrac < (h.mArena == aAway ? 0.38f : 0.25f))
+		if (aHpFrac < (mSkill == 0 ? (h.mArena == aAway ? 0.2f : 0.12f) : (h.mArena == aAway ? 0.38f : 0.25f)))	// Easy retreats later
 			mRetreatUntil = s.mNow + 60000;
 		if (aHpFrac > 0.88f)
 			mRetreatUntil = 0;
@@ -450,7 +464,7 @@ namespace Heroes
 	{
 		if (!Elapsed(s.mNow, mNextCast))
 			return false;
-		mNextCast = s.mNow + (mSkill >= 2 ? 250 : 450);
+		mNextCast = s.mNow + (mSkill >= 2 ? 250 : (mSkill == 1 ? 450 : 900));
 		const HeroState& h = s.mHero;
 		float aHpFrac = h.mHp / std::max(1.0f, s.MaxHp());
 		float aEnemyD = theEnemy != nullptr ? Dist(theEnemy->mPos, h.mPos) : 1e9f;
@@ -539,7 +553,7 @@ namespace Heroes
 					return true;
 			break;
 		}
-		case HERO_STINKY:
+		case HERO_SPEEDY:
 			if (aHpFrac < 0.4f && (aEnemyD < 250 || aHasTarget) && Try(AB_E, h.mPos))
 				return true;
 			if (theEnemy != nullptr && aEnemyD < 250 && Try(AB_Q, h.mPos))
@@ -548,7 +562,7 @@ namespace Heroes
 				return true;
 			if (theEnemy != nullptr && aEnemyD < 300 && Try(AB_W, theEnemy->mPos))
 				return true;
-			if (h.mArena == s.mTeam && s.mArena.FishCount() >= 7 && Try(AB_R, h.mPos))
+			if (s.mArena.FishCount() >= 7 && Try(AB_R, h.mPos))	// works while raiding too (D31)
 				return true;
 			break;
 		default:

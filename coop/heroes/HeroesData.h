@@ -20,8 +20,14 @@ namespace Heroes
 	///////////////////////////////////////////////////////////////////////////
 	// Heroes
 	///////////////////////////////////////////////////////////////////////////
-	enum HeroId : uint8_t { HERO_ITCHY, HERO_CLYDE, HERO_RHUBARB, HERO_ANGIE, HERO_STINKY, HERO_COUNT };
-	static const int AB_Q = 0, AB_W = 1, AB_E = 2, AB_R = 3, AB_COUNT = 4;	// ability slots
+	enum HeroId : uint8_t { HERO_ITCHY, HERO_CLYDE, HERO_RHUBARB, HERO_ANGIE, HERO_SPEEDY, HERO_COUNT };
+	static const int AB_Q = 0, AB_W = 1, AB_E = 2, AB_R = 3, AB_COUNT = 4;	// ability slots (keys Q, E, R, F)
+
+	// WASD movement: walkers hop with W (minion attacks and slowing ground miss them in
+	// the air) and cross with S near the portal's beam or a floor pad.
+	static const float	kHopHeight = 120;
+	static const int	kHopMs = 500, kHopCooldownMs = 3000;
+	static const float	kCrossAssistR = 150;
 
 	// How an ability is aimed.
 	enum AimKind : uint8_t
@@ -50,7 +56,7 @@ namespace Heroes
 		const char*	mName;
 		const char*	mRole;
 		const char*	mBlurb;
-		bool		mWalker;		// walks the floor (Rhubarb, Stinky); else swims
+		bool		mWalker;		// walks the floor (Rhubarb, Speedy); else swims
 		float		mHealth;
 		float		mDamage;		// auto-attack
 		float		mRange;			// auto-attack reach (walkers: horizontal)
@@ -197,7 +203,7 @@ namespace Heroes
 	enum ShopId : uint8_t
 	{
 		SHOP_GUPPY, SHOP_BREEDER, SHOP_CARNIVORE,
-		SHOP_FOOD_QUALITY, SHOP_FOOD_COUNT, SHOP_LASER,
+		SHOP_FOOD_QUALITY, SHOP_FOOD_COUNT, SHOP_LASER, SHOP_COLLECTOR,
 		SHOP_ITEM_FIRST, SHOP_ITEM_LAST = SHOP_ITEM_FIRST + ITEM_COUNT - 1,
 		SHOP_REPAIR_LEFT, SHOP_REPAIR_RIGHT, SHOP_TOWER_UPGRADE,
 		SHOP_WAVE_SIZE, SHOP_WAVE_TOUGH, SHOP_SEND_SYLV, SHOP_SEND_GUS, SHOP_SEND_BALROG, SHOP_SEND_DESTRUCTOR,
@@ -212,6 +218,11 @@ namespace Heroes
 	const ShopDef& ShopDefOf(int theShop);
 	static const int	kFoodQualityPrice[2] = { 200, 400 };
 	static const int	kFoodCountPrice = 150;
+	// Stinky, the coin collector pet (D30): crawls the floor picking up landed coins.
+	static const int	kCollectorPrice[2] = { 250, 500 };
+	static const float	kCollectorSpeed[2] = { 60, 120 };
+	static const float	kCollectorReach = 34, kCollectorRadius = 18;
+	static const float	kMissedCoinShare = 0.5f;		// a coin nobody took pays this much as it vanishes
 
 	///////////////////////////////////////////////////////////////////////////
 	// The arena's layout (the same in both tanks)

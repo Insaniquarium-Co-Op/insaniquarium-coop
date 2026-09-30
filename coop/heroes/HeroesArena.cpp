@@ -14,6 +14,7 @@ namespace Heroes
 		mTeam = theTeam;
 		mRng.Seed(theSeed);
 		mLastStep = theNow;
+		mCollectorPos = WalkerPos(TheMap().mCore.x + 160, kCollectorRadius);
 		for (int i = 0; i < kStartGuppies; i++)
 			AddFish(FISH_GUPPY, theNow, Vec(520 + 240.0f * i, 560));
 	}
@@ -312,15 +313,42 @@ namespace Heroes
 
 	void Arena::StepCoins(uint32_t theNow, float theDt, const ArenaContext& theCtx)
 	{
-		bool aPull = theCtx.mGoldRush && theCtx.mOwnerHeroHere;
+		// Gold Rush: coins fly to Speedy, or, while he's away, up into the portal and into
+		// the wallet (D31).
+		bool aPull = theCtx.mGoldRush;
+		Vec aPullTo = theCtx.mOwnerHeroHere ? theCtx.mOwnerHeroPos : TheMap().mPortal;
+		// Stinky the pet crawls toward the nearest coin that's low enough to reach soon.
+		if (mCollectorLevel > 0)
+		{
+			const Coin* aBest = nullptr;
+			float aBestD = 1e9f;
+			for (const Coin& c : mCoins)
+			{
+				if (c.mPos.y < FloorY(c.mPos.x) - 160)
+					continue;
+				float d = std::fabs(c.mPos.x - mCollectorPos.x);
+				if (d < aBestD)
+				{
+					aBestD = d;
+					aBest = &c;
+				}
+			}
+			if (aBest != nullptr && aBestD > 4)
+			{
+				float aStep = kCollectorSpeed[std::min(mCollectorLevel, 2) - 1] * theDt;
+				float x = mCollectorPos.x + Clamp(aBest->mPos.x - mCollectorPos.x, -aStep, aStep);
+				mCollectorRight = x > mCollectorPos.x;
+				mCollectorPos = WalkerPos(x, kCollectorRadius);
+			}
+		}
 		for (size_t i = 0; i < mCoins.size();)
 		{
 			Coin& c = mCoins[i];
 			bool aTaken = false;
 			if (aPull)
 			{
-				StepToward(c.mPos, theCtx.mOwnerHeroPos, 700 * theDt);
-				aTaken = Dist(c.mPos, theCtx.mOwnerHeroPos) < 30;
+				StepToward(c.mPos, aPullTo, 700 * theDt);
+				aTaken = Dist(c.mPos, aPullTo) < 30;
 			}
 			else
 			{
@@ -331,6 +359,8 @@ namespace Heroes
 					c.mLandedAt = theNow;
 				if (theCtx.mScavenger && theCtx.mOwnerHeroHere && Dist(c.mPos, theCtx.mOwnerHeroPos) < 56)
 					aTaken = true;
+				if (mCollectorLevel > 0 && std::fabs(c.mPos.x - mCollectorPos.x) < kCollectorReach && c.mPos.y > FloorY(c.mPos.x) - 50)
+					aTaken = true;				// Stinky the pet
 			}
 			if (aTaken)
 			{
@@ -341,6 +371,11 @@ namespace Heroes
 			}
 			if (c.mLandedAt != 0 && Elapsed(theNow, c.mLandedAt + (uint32_t)(kCoinFloorS * 1000)))
 			{
+				// Missed: it still pays half as it sinks away.
+				int aBank = (int)(CoinValue(c.mKind) * kMissedCoinShare);
+				Earn(aBank, c.mPos, false);
+				mMissedMoney += aBank;
+				Text(c.mPos - Vec(0, 16), "+$" + std::to_string(aBank), TC_INFO);
 				mCoins.erase(mCoins.begin() + i);
 				continue;
 			}
@@ -1037,6 +1072,10 @@ namespace Heroes
 		}
 		for (const Coin& c : mCoins)
 			s.mCoins.push_back({ c.mId, c.mKind, c.mPos });
+		s.mFoodQuality = (uint8_t)mFoodQuality;
+		s.mCollectorLevel = (uint8_t)mCollectorLevel;
+		s.mCollectorPos = mCollectorPos;
+		s.mCollectorRight = mCollectorRight;
 		for (const Food& fd : mFood)
 			s.mFood.push_back({ fd.mId, fd.mPos });
 		for (const Minion& m : mMinions)

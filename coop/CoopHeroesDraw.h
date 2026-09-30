@@ -36,7 +36,10 @@ namespace Coop
 			bool		mPractice = false;
 			std::string	mNames[Heroes::kMaxPlayers];
 			int			mAimSlot = -1;		// holding Q/W/E/R: show its reach
+			std::string	mAlert;				// home under attack while you look at the rival's tank
+			uint32_t	mAlertAt = 0;
 		};
+		static const uint32_t	kAlertShowMs = 3000;
 
 		void	DrawTank(Sexy::Graphics* g, const ViewState& v);
 		void	DrawTopStrip(Sexy::Graphics* g, const ViewState& v);
@@ -47,6 +50,7 @@ namespace Coop
 		// Clicks on the HUD: 0-3 abilities, 10-13 quick buy, 20 shop, 30 mini-map; -1 none.
 		int		HudHit(int x, int y);
 		static const int	kQuickSlots = 4;
+		static const char* const kAbilityKeys[4] = { "Q", "E", "R", "F" };	// keys for ability slots AB_Q..AB_R (WASD moves)
 		int		QuickShop(int theSlot);			// the shop entry behind quick-buy slot 1-4
 		// Clicks on the open shop: a shop entry, or -2 - tab; -1 none; -100 close.
 		int		ShopHit(const ViewState& v, int x, int y);

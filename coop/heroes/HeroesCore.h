@@ -131,6 +131,10 @@ namespace Heroes
 		float		mCoreHp = 0;
 		float		mCoreShield = 0;
 		uint16_t	mFishCount = 0;
+		uint8_t		mFoodQuality = 0;		// 0 pellets, 1 cans, 2 pills
+		uint8_t		mCollectorLevel = 0;	// Stinky the pet (0: none)
+		Vec			mCollectorPos;
+		bool		mCollectorRight = true;
 		std::vector<FishSnap>	mFish;
 		std::vector<CoinSnap>	mCoins;
 		std::vector<FoodSnap>	mFood;

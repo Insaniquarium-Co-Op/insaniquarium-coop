@@ -52,6 +52,64 @@ namespace Heroes
 		mHero.mTarget = EntityRef();
 	}
 
+	void Side::Steer(Vec theDir)
+	{
+		float l = Len(theDir);
+		mSteer = l > 0.001f ? theDir * (1.0f / l) : Vec();
+		if (l > 0.001f && mHero.mOrder != HeroState::ORD_IDLE)
+			OrderStop();						// the keys take over from a right-click order
+	}
+
+	bool Side::Hop()
+	{
+		HeroState& h = mHero;
+		if (!h.mAlive || !h.Def().mWalker || Stunned() || Busy() || Hopping())
+			return false;
+		if (!Elapsed(mNow, h.mHopReadyAt))
+		{
+			mLastRefusal = "Hop recharging.";
+			return false;
+		}
+		h.mHopStart = mNow;
+		h.mHopUntil = mNow + kHopMs;
+		h.mHopReadyAt = mNow + kHopCooldownMs;
+		return true;
+	}
+
+	bool Side::CrossNearby()
+	{
+		HeroState& h = mHero;
+		const HeroDef& d = h.Def();
+		mLastRefusal.clear();
+		if (!h.mAlive || !d.mWalker)
+			return false;
+		// The nearest crossing along the floor: the portal's beam or a pad.
+		const MapDef& m = TheMap();
+		Vec aBest = m.mPortal;
+		float aBestD = std::fabs(h.mPos.x - m.mPortal.x);
+		for (int i = 0; i < 2; i++)
+		{
+			float dx = std::fabs(h.mPos.x - m.mPad[i].x) - m.mPadR;
+			if (dx < aBestD)
+			{
+				aBestD = dx;
+				aBest = m.mPad[i];
+			}
+		}
+		if (aBestD > kCrossAssistR)
+		{
+			mLastRefusal = "S crosses near the portal's beam or a floor pad.";
+			return false;
+		}
+		if (WarpSicknessLeft() > 0)
+		{
+			mLastRefusal = "Warp sickness: " + std::to_string((WarpSicknessLeft() + 999) / 1000) + " s before you can cross again.";
+			return false;
+		}
+		OrderMove(aBest);
+		return true;
+	}
+
 	static bool InReach(const HeroState& h, const Target& t, float theRange)
 	{
 		const HeroDef& d = h.Def();
@@ -112,6 +170,18 @@ namespace Heroes
 		{
 			StepAttack();
 			StepMovement(theDt);
+			StepSteer(theDt);
+		}
+		// A walker's hop: up and down over the floor (Rhubarb's Leap has its own arc).
+		if (d.mWalker && h.mLeapUntil == 0)
+		{
+			float aUp = 0;
+			if (Hopping())
+			{
+				float t = Clamp((float)(int32_t)(mNow - h.mHopStart) / kHopMs, 0, 1);
+				aUp = std::sin(t * 3.14159f) * kHopHeight;
+			}
+			h.mPos = WalkerPos(h.mPos.x, d.mRadius) - Vec(0, aUp);
 		}
 
 		// Portals: the warp hole (top middle) and the floor pads (bottom corners).
@@ -237,6 +307,51 @@ namespace Heroes
 			h.mRight = h.mPos.x > aOld.x;
 	}
 
+	void Side::StepSteer(float theDt)
+	{
+		HeroState& h = mHero;
+		const HeroDef& d = h.Def();
+		if (h.mOrder != HeroState::ORD_IDLE || (mSteer.x == 0 && mSteer.y == 0))
+			return;
+		float aStep = Speed() * theDt;
+		Vec aOld = h.mPos;
+		if (d.mWalker)
+		{
+			if (mSteer.x != 0)
+				h.mPos = WalkerPos(Clamp(h.mPos.x + (mSteer.x > 0 ? aStep : -aStep), d.mRadius, kWorldW - d.mRadius), d.mRadius);
+		}
+		else
+		{
+			// Swim. Against a wall, slide along it: first the part of the move that fits,
+			// then turned 45 and 90 degrees, keeping to one side until clear (never get stuck
+			// inside one either).
+			bool aFree = !SwimmerFits(h.mPos, d.mRadius);
+			auto TryMove = [&](Vec theMove) {
+				Vec q = ClampToWater(h.mPos + theMove, d.mRadius);
+				if (Dist(q, h.mPos) < 0.01f || (!aFree && !SwimmerFits(q, d.mRadius)))
+					return false;
+				h.mPos = q;
+				return true;
+			};
+			Vec v = mSteer * aStep;
+			bool aMoved = TryMove(v) || TryMove(Vec(v.x, 0)) || TryMove(Vec(0, v.y));
+			bool aAtEdge = Dist(ClampToWater(h.mPos + v, d.mRadius), h.mPos + v) > 0.01f;	// turning gets around walls, not along the tank's edges
+			for (int aTurn = 0; !aMoved && !aAtEdge && aTurn < 4; aTurn++)
+			{
+				float aSide = aTurn < 2 ? mSlideSide : -mSlideSide;
+				float c = aTurn % 2 == 0 ? 0.7071f : 0.0f, n = aTurn % 2 == 0 ? 0.7071f : 1.0f;
+				Vec aDir(mSteer.x * c - mSteer.y * n * aSide, mSteer.y * c + mSteer.x * n * aSide);
+				if (TryMove(aDir * aStep))
+				{
+					aMoved = true;
+					mSlideSide = aSide;
+				}
+			}
+		}
+		if (std::fabs(h.mPos.x - aOld.x) > 0.05f)
+			h.mRight = h.mPos.x > aOld.x;
+	}
+
 	void Side::StepAttack()
 	{
 		HeroState& h = mHero;
@@ -290,7 +405,7 @@ namespace Heroes
 			p.mRadius = 12;
 			p.mHit = MakeHit(aDamage, SRC_ATTACK);
 			p.mHoming = t.mRef;
-			p.mLook = h.mHero == HERO_CLYDE ? LOOK_CLYDE_ATTACK : (h.mHero == HERO_STINKY ? LOOK_SLIME : LOOK_ANGIE_ATTACK);
+			p.mLook = h.mHero == HERO_CLYDE ? LOOK_CLYDE_ATTACK : (h.mHero == HERO_SPEEDY ? LOOK_SLIME : LOOK_ANGIE_ATTACK);
 			p.mChain = aChain;
 			p.mStopAtWalls = false;
 			mProj.push_back(p);
@@ -586,7 +701,7 @@ namespace Heroes
 			Sound(h.mArena, SND_THUNDER, h.mPos);
 		}
 
-		// Stinky's Slime Trail.
+		// Speedy's Slime Trail.
 		if (!Elapsed(mNow, h.mSlimeUntil) && Dist(h.mPos, h.mLastSlime) > 34)
 		{
 			const AbilityDef& a = d.mAb[AB_Q];
@@ -789,6 +904,7 @@ namespace Heroes
 			h.mLeapTo = WalkerPos(Clamp(theAim.x, h.mPos.x - a.mRange, h.mPos.x + a.mRange), d.mRadius);
 			h.mLeapStart = mNow;
 			h.mLeapUntil = mNow + (uint32_t)(a.mDurationS * 1000);
+			h.mHopUntil = 0;
 			h.mOrder = HeroState::ORD_IDLE;
 			Sound(h.mArena, SND_ROAR, h.mPos);
 			break;
@@ -930,22 +1046,22 @@ namespace Heroes
 			break;
 		}
 
-		// ---- Stinky ----
-		case HERO_STINKY * AB_COUNT + AB_Q:
+		// ---- Speedy ----
+		case HERO_SPEEDY * AB_COUNT + AB_Q:
 			h.mSlimeUntil = mNow + (uint32_t)(a.mDurationS * 1000);
 			h.mLastSlime = Vec(-1000, -1000);
 			Sound(h.mArena, SND_SPLASH, h.mPos);
 			break;
-		case HERO_STINKY * AB_COUNT + AB_W:
+		case HERO_SPEEDY * AB_COUNT + AB_W:
 			AddZone(aPoint, a.mRadius, a.mDamage * aScale, 0, true, LOOK_STINK);
 			Sound(h.mArena, SND_STINK, aPoint);
 			break;
-		case HERO_STINKY * AB_COUNT + AB_E:
+		case HERO_SPEEDY * AB_COUNT + AB_E:
 			h.mImmuneUntil = mNow + (uint32_t)(a.mDurationS * 1000);
 			Burst(h.mPos, 44, LOOK_HALO);
 			Sound(h.mArena, SND_SHIELD, h.mPos);
 			break;
-		case HERO_STINKY * AB_COUNT + AB_R:
+		case HERO_SPEEDY * AB_COUNT + AB_R:
 			h.mGoldRushUntil = mNow + (uint32_t)(a.mDurationS * 1000);
 			Burst(h.mPos, 90, LOOK_GOLD);
 			Text(h.mArena, h.mPos - Vec(0, 56), "Gold Rush!", TC_MONEY);
