@@ -1,4 +1,5 @@
 #include "HeroesNet.h"
+#include <cmath>
 
 namespace Heroes
 {
@@ -11,22 +12,36 @@ namespace Heroes
 
 	void Put(Writer& w, const Hit& v)
 	{
-		w.F32(v.mDamage); w.I8(v.mPlayer); w.U8(v.mTeam); w.U8(v.mSource);
-		w.U16(v.mStunMs); w.U16(v.mSlowMs); w.F32(v.mSlowPct);
+		w.F32(v.mDamage); w.I8(v.mPlayer); w.U8(v.mTeam); w.U8(v.mSource); w.U8(v.mAbility); w.U8(v.mHero);
+		w.U16(v.mStunMs); w.U16(v.mSleepMs); w.U16(v.mSlowMs); w.F32(v.mSlowPct);
 		w.Pos(v.mPush); w.U8(v.mPull ? 1 : 0); w.Pos(v.mPullTo);
 		w.U16(v.mCharmMs); w.U16(v.mBlindMs); w.F32(v.mHeal); w.F32(v.mShield); w.U16(v.mShieldMs);
+		w.F32(v.mMaxHpPct); w.U16(v.mRallyMs); w.U8(v.mCleanse ? 1 : 0);
 	}
 	bool Get(Reader& r, Hit& v)
 	{
-		v.mDamage = r.F32(); v.mPlayer = r.I8(); v.mTeam = r.U8(); v.mSource = r.U8();
-		v.mStunMs = r.U16(); v.mSlowMs = r.U16(); v.mSlowPct = r.F32();
+		v.mDamage = r.F32(); v.mPlayer = r.I8(); v.mTeam = r.U8(); v.mSource = r.U8(); v.mAbility = r.U8(); v.mHero = r.U8();
+		v.mStunMs = r.U16(); v.mSleepMs = r.U16(); v.mSlowMs = r.U16(); v.mSlowPct = r.F32();
 		v.mPush = r.Pos(); v.mPull = r.U8() != 0; v.mPullTo = r.Pos();
 		v.mCharmMs = r.U16(); v.mBlindMs = r.U16(); v.mHeal = r.F32(); v.mShield = r.F32(); v.mShieldMs = r.U16();
-		return !r.mBad;
+		v.mMaxHpPct = r.F32(); v.mRallyMs = r.U16(); v.mCleanse = r.U8() != 0;
+		return !r.mBad && std::isfinite(v.mDamage) && std::isfinite(v.mHeal) && std::isfinite(v.mShield);
 	}
 
-	void Put(Writer& w, const Reward& v) { w.I8(v.mPlayer); w.I8(v.mTeam); w.F32(v.mXp); w.U32((uint32_t)v.mMoney); w.U8(v.mWhat); }
-	bool Get(Reader& r, Reward& v) { v.mPlayer = r.I8(); v.mTeam = r.I8(); v.mXp = r.F32(); v.mMoney = (int)r.U32(); v.mWhat = r.U8(); return !r.mBad; }
+	void Put(Writer& w, const Reward& v) { w.I8(v.mPlayer); w.I8(v.mTeam); w.F32(v.mXp); w.U32((uint32_t)v.mMoney); w.U8(v.mWhat); w.U8(v.mBuff); }
+	bool Get(Reader& r, Reward& v) { v.mPlayer = r.I8(); v.mTeam = r.I8(); v.mXp = r.F32(); v.mMoney = (int)r.U32(); v.mWhat = r.U8(); v.mBuff = r.U8(); return !r.mBad && std::isfinite(v.mXp); }
+
+	void Put(Writer& w, const Arrival& v) { w.U8(v.mKind); w.F32(v.mMult); w.U8((uint8_t)std::lround(Clamp(v.mHpFrac, 0, 1) * 255)); }
+	bool Get(Reader& r, Arrival& v)
+	{
+		v.mKind = (uint8_t)std::min<int>(r.U8(), MIN_KIND_COUNT - 1);
+		v.mMult = r.F32();
+		v.mHpFrac = r.U8() / 255.0f;
+		if (!std::isfinite(v.mMult))
+			v.mMult = 1;
+		v.mMult = Clamp(v.mMult, 0.5f, 10);
+		return !r.mBad;
+	}
 
 	void Put(Writer& w, const Event& v)
 	{
@@ -46,27 +61,34 @@ namespace Heroes
 
 	void Put(Writer& w, const HeroSnap& v)
 	{
-		w.U8(v.mPlayer); w.U8(v.mTeam); w.U8(v.mHero); w.U8(v.mArena); w.U16(v.mFlags);
+		w.U8(v.mPlayer); w.U8(v.mTeam); w.U8(v.mHero); w.U8(v.mArena); w.U8(v.mBaseHero); w.U32(v.mFlags);
 		w.Pos(v.mPos); w.F32(v.mHp); w.F32(v.mMaxHp); w.F32(v.mShield);
-		w.U8(v.mLevel); w.U16(v.mRespawnMs); w.U16(v.mKills); w.U16(v.mDeaths);
+		w.U8(v.mLevel); w.U16(v.mRespawnMs); w.U16(v.mKills); w.U16(v.mDeaths); w.U8(v.mStreak); w.U8(v.mTalents);
+		for (int i = 0; i < BUFF_COUNT; i++)
+			w.U8(v.mBuffS[i]);
 		for (int i = 0; i < kItemSlots; i++)
 			w.U8(v.mItems[i]);
 		w.U16(v.mFishLost); w.U16(v.mTowers); w.U32(v.mEarned);
+		w.U32(v.mStructDamage); w.U16(v.mLaneCoins); w.U16(v.mMinionKills); w.U8(v.mObjectives);
 	}
 	bool Get(Reader& r, HeroSnap& v)
 	{
-		v.mPlayer = r.U8(); v.mTeam = r.U8(); v.mHero = r.U8(); v.mArena = r.U8(); v.mFlags = r.U16();
+		v.mPlayer = r.U8(); v.mTeam = r.U8(); v.mHero = r.U8(); v.mArena = r.U8(); v.mBaseHero = r.U8(); v.mFlags = r.U32();
 		v.mPos = r.Pos(); v.mHp = r.F32(); v.mMaxHp = r.F32(); v.mShield = r.F32();
-		v.mLevel = r.U8(); v.mRespawnMs = r.U16(); v.mKills = r.U16(); v.mDeaths = r.U16();
+		v.mLevel = r.U8(); v.mRespawnMs = r.U16(); v.mKills = r.U16(); v.mDeaths = r.U16(); v.mStreak = r.U8(); v.mTalents = r.U8();
+		for (int i = 0; i < BUFF_COUNT; i++)
+			v.mBuffS[i] = r.U8();
 		for (int i = 0; i < kItemSlots; i++)
 			v.mItems[i] = r.U8();
 		v.mFishLost = r.U16(); v.mTowers = r.U16(); v.mEarned = r.U32();
-		return !r.mBad && v.mHero < HERO_COUNT && v.mPlayer < kMaxPlayers;
+		v.mStructDamage = r.U32(); v.mLaneCoins = r.U16(); v.mMinionKills = r.U16(); v.mObjectives = r.U8();
+		return !r.mBad && v.mHero < HERO_COUNT && v.mBaseHero < HERO_COUNT && v.mPlayer < kMaxPlayers && v.mArena < kArenaCount
+			&& std::isfinite(v.mPos.x) && std::isfinite(v.mPos.y);
 	}
 
 	void Put(Writer& w, const ArenaSnap& v)
 	{
-		w.U8(v.mTeam);
+		w.U8(v.mArena); w.U8(v.mTeam);
 		for (int i = 0; i < 2; i++)
 		{
 			w.F32(v.mTowerHp[i]);
@@ -75,6 +97,8 @@ namespace Heroes
 		w.F32(v.mTowerMax); w.U8(v.mTowerLevel); w.U8(v.mTowerBlind);
 		w.F32(v.mCoreHp); w.F32(v.mCoreShield); w.U16(v.mFishCount); w.U8(v.mFoodQuality);
 		w.U8(v.mCollectorLevel); PutPosQ(w, v.mCollectorPos); w.U8(v.mCollectorRight ? 1 : 0);
+		for (int i = 0; i < MON_COUNT; i++)
+			w.U16(v.mMonsterIn[i]);
 		w.U16((uint16_t)v.mFish.size());
 		for (const FishSnap& f : v.mFish) { w.U32(f.mId); w.U8(f.mKind); w.U8(f.mSize); w.U8(f.mFlags); PutPosQ(w, f.mPos); }
 		w.U16((uint16_t)v.mCoins.size());
@@ -87,7 +111,7 @@ namespace Heroes
 	bool Get(Reader& r, ArenaSnap& v)
 	{
 		v = ArenaSnap();
-		v.mTeam = r.U8();
+		v.mArena = r.U8(); v.mTeam = r.U8();
 		for (int i = 0; i < 2; i++)
 		{
 			v.mTowerHp[i] = r.F32();
@@ -96,6 +120,8 @@ namespace Heroes
 		v.mTowerMax = r.F32(); v.mTowerLevel = r.U8(); v.mTowerBlind = r.U8();
 		v.mCoreHp = r.F32(); v.mCoreShield = r.F32(); v.mFishCount = r.U16(); v.mFoodQuality = r.U8();
 		v.mCollectorLevel = r.U8(); v.mCollectorPos = GetPosQ(r); v.mCollectorRight = r.U8() != 0;
+		for (int i = 0; i < MON_COUNT; i++)
+			v.mMonsterIn[i] = r.U16();
 		size_t n = r.U16();
 		for (size_t i = 0; i < n && !r.mBad; i++) { FishSnap f; f.mId = r.U32(); f.mKind = r.U8(); f.mSize = r.U8(); f.mFlags = r.U8(); f.mPos = GetPosQ(r); v.mFish.push_back(f); }
 		n = r.U16();
@@ -103,8 +129,14 @@ namespace Heroes
 		n = r.U16();
 		for (size_t i = 0; i < n && !r.mBad; i++) { FoodSnap f; f.mId = r.U32(); f.mPos = GetPosQ(r); v.mFood.push_back(f); }
 		n = r.U16();
-		for (size_t i = 0; i < n && !r.mBad; i++) { MinionSnap m; m.mId = r.U32(); m.mKind = r.U8(); m.mFlags = r.U8(); m.mTeam = r.U8(); m.mHpFrac = r.U8() / 255.0f; m.mPos = GetPosQ(r); v.mMinions.push_back(m); }
-		return !r.mBad;
+		for (size_t i = 0; i < n && !r.mBad; i++)
+		{
+			MinionSnap m;
+			m.mId = r.U32(); m.mKind = (uint8_t)std::min<int>(r.U8(), MIN_KIND_COUNT - 1); m.mFlags = r.U8(); m.mTeam = r.U8();
+			m.mHpFrac = r.U8() / 255.0f; m.mPos = GetPosQ(r);
+			v.mMinions.push_back(m);
+		}
+		return !r.mBad && v.mArena < kArenaCount;
 	}
 
 	///////////////////////////////////////////////////////////////////////////

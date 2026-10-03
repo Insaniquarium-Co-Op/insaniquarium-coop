@@ -21,8 +21,10 @@ namespace Coop
 {
 	namespace HV
 	{
-		static const Color kTeamColor[2] = { Color(255, 205, 60), Color(80, 220, 255) };
+		WorldView gView;
+		static const Color kTeamColor[3] = { Color(255, 205, 60), Color(80, 220, 255), Color(200, 120, 255) };
 		static bool Elapsed(uint32_t theNow, uint32_t theAt) { return (int32_t)(theNow - theAt) >= 0; }
+		const Color& TeamColor(int theTeam) { return kTeamColor[std::clamp(theTeam, 0, 2)]; }
 
 		///////////////////////////////////////////////////////////////////////
 		// Small drawing helpers
@@ -40,14 +42,14 @@ namespace Coop
 			return theImage->GetCelRect(theCol % std::max(1, theImage->mNumCols), theRow % std::max(1, theImage->mNumRows));
 		}
 
-		static void Sprite(Graphics* g, Image* theImage, int theCol, int theRow, float wx, float wy, float theScale, bool theMirror,
-			const Color& theTint = Color(255, 255, 255), bool theColorize = false)
+		void Sprite(Graphics* g, Image* theImage, int theCol, int theRow, float wx, float wy, float theScale, bool theMirror, const Color& theTint, bool theColorize)
 		{
 			if (theImage == nullptr)
 				return;
 			Rect aSrc = Cel(theImage, theCol, theRow);
 			Transform t;
-			t.Scale(theMirror ? -theScale * kScale : theScale * kScale, theScale * kScale);
+			float k = theScale * gView.mScale;
+			t.Scale(theMirror ? -k : k, k);
 			if (theColorize || theTint.mAlpha < 255)
 			{
 				g->SetColorizeImages(true);
@@ -56,10 +58,13 @@ namespace Coop
 			g->DrawImageTransformF(theImage, t, aSrc, SX(wx), SY(wy));
 			g->SetColorizeImages(false);
 		}
+		void Sprite(Graphics* g, Image* theImage, int theCol, int theRow, float wx, float wy, float theScale, bool theMirror)
+		{
+			Sprite(g, theImage, theCol, theRow, wx, wy, theScale, theMirror, Color(255, 255, 255), false);
+		}
 
 		// The same in screen coordinates (HUD, draft).
-		static void ScreenSprite(Graphics* g, Image* theImage, int theCol, int theRow, float sx, float sy, float theScale, bool theMirror,
-			const Color& theTint = Color(255, 255, 255), bool theColorize = false)
+		void ScreenSprite(Graphics* g, Image* theImage, int theCol, int theRow, float sx, float sy, float theScale, bool theMirror, const Color& theTint, bool theColorize)
 		{
 			if (theImage == nullptr)
 				return;
@@ -74,8 +79,12 @@ namespace Coop
 			g->DrawImageTransformF(theImage, t, aSrc, sx, sy);
 			g->SetColorizeImages(false);
 		}
+		void ScreenSprite(Graphics* g, Image* theImage, int theCol, int theRow, float sx, float sy, float theScale, bool theMirror)
+		{
+			ScreenSprite(g, theImage, theCol, theRow, sx, sy, theScale, theMirror, Color(255, 255, 255), false);
+		}
 
-		static void Disc(Graphics* g, float cx, float cy, float r, const Color& c, int theSides = 20)
+		void Disc(Graphics* g, float cx, float cy, float r, const Color& c, int theSides)
 		{
 			if (r < 0.5f)
 				return;
@@ -86,21 +95,22 @@ namespace Coop
 			g->PolyFill(p.data(), (int)p.size(), true);
 		}
 
-		static void Ring(Graphics* g, float cx, float cy, float r, const Color& c, int theThick = 1)
+		void Ring(Graphics* g, float cx, float cy, float r, const Color& c, int theThick)
 		{
 			g->SetColor(c);
+			int n = r > 40 ? 48 : 32;
 			for (int t = 0; t < theThick; t++)
 			{
 				float rr = r + t;
-				for (int k = 0; k < 32; k++)
+				for (int k = 0; k < n; k++)
 				{
-					float a0 = k * 6.2832f / 32, a1 = (k + 1) * 6.2832f / 32;
+					float a0 = k * 6.2832f / n, a1 = (k + 1) * 6.2832f / n;
 					g->DrawLine((int)(cx + rr * std::cos(a0)), (int)(cy + rr * std::sin(a0)), (int)(cx + rr * std::cos(a1)), (int)(cy + rr * std::sin(a1)));
 				}
 			}
 		}
 
-		static void Bar(Graphics* g, int x, int y, int w, int h, float theFrac, const Color& theFill, const Color& theBack = Color(20, 20, 30, 200))
+		void Bar(Graphics* g, int x, int y, int w, int h, float theFrac, const Color& theFill, const Color& theBack)
 		{
 			g->SetColor(theBack);
 			g->FillRect(x - 1, y - 1, w + 2, h + 2);
@@ -108,8 +118,9 @@ namespace Coop
 			g->SetColor(theFill);
 			g->FillRect(x, y, f, h);
 		}
+		void Bar(Graphics* g, int x, int y, int w, int h, float theFrac, const Color& theFill) { Bar(g, x, y, w, h, theFrac, theFill, Color(20, 20, 30, 200)); }
 
-		static void Text(Graphics* g, Font* f, const std::string& s, int x, int y, const Color& c)
+		void Text(Graphics* g, Font* f, const std::string& s, int x, int y, const Color& c)
 		{
 			if (f == nullptr)
 				return;
@@ -118,14 +129,14 @@ namespace Coop
 			g->DrawString(s, x, y);
 		}
 
-		static void Centered(Graphics* g, Font* f, const std::string& s, int cx, int y, const Color& c)
+		void Centered(Graphics* g, Font* f, const std::string& s, int cx, int y, const Color& c)
 		{
 			if (f == nullptr)
 				return;
 			Text(g, f, s, cx - f->StringWidth(s) / 2, y, c);
 		}
 
-		static int Wrapped(Graphics* g, Font* f, const std::string& s, int x, int y, int w, const Color& c)
+		int Wrapped(Graphics* g, Font* f, const std::string& s, int x, int y, int w, const Color& c)
 		{
 			// Simple word wrap; returns the y below the text.
 			if (f == nullptr)
@@ -157,7 +168,7 @@ namespace Coop
 			return y;
 		}
 
-		static std::string Clock(uint32_t theMs)
+		std::string Clock(uint32_t theMs)
 		{
 			char b[16];
 			snprintf(b, sizeof(b), "%u:%02u", theMs / 60000, (theMs / 1000) % 60);
@@ -167,8 +178,6 @@ namespace Coop
 		const char* HeroName(int theHero) { return HeroDefOf(theHero).mName; }
 
 		// Speedy (D30): Stinky's art in a neon, purple-heavy palette, made once per image.
-		// Browns turn electric purple, the yellow-green body hot magenta; whites, greys and
-		// the dark outline stay (a little purple), so he still reads as a snail.
 		static Image* Neon(Image* theSrc)
 		{
 			static std::map<Image*, MemoryImage*> sCache;
@@ -203,14 +212,11 @@ namespace Coop
 					}
 					if (sat < 0.18f)
 					{
-						// Greys: a touch of violet.
 						hue = 275;
 						sat = std::min(1.0f, sat + 0.18f);
 					}
 					else
 					{
-						// Browns and oranges (0-50) to purple, yellows and greens (50-150) to magenta;
-						// the shell's dark spiral lines to electric cyan.
 						bool aLine = hue < 50 && val < 0.42f && val > 0.12f;
 						hue = aLine ? 185 : (hue < 50 ? 270 + hue * 0.3f : (hue < 150 ? 300 + (hue - 50) * 0.25f : std::fmod(hue + 120, 360.0f)));
 						sat = std::min(1.0f, sat * 1.3f + 0.25f);
@@ -245,11 +251,15 @@ namespace Coop
 			case HERO_CLYDE: return IMAGE_CLYDE;
 			case HERO_RHUBARB: return IMAGE_RHUBARB;
 			case HERO_ANGIE: return IMAGE_ANGIE;
+			case HERO_PRESTO: return IMAGE_PRESTO;
+			case HERO_NIKO: return IMAGE_NIKO;
+			case HERO_MERYL: return IMAGE_MERYL;
+			case HERO_SHRAPNEL: return IMAGE_SHRAPNEL;
 			default: return Neon(IMAGE_STINKY);
 			}
 		}
 
-		static Image* HeroPortrait(int theHero)
+		Image* HeroPortrait(int theHero)
 		{
 			switch (theHero)
 			{
@@ -257,11 +267,23 @@ namespace Coop
 			case HERO_CLYDE: return IMAGE_SCL_CLYDE;
 			case HERO_RHUBARB: return IMAGE_SCL_RHUBARB;
 			case HERO_ANGIE: return IMAGE_SCL_ANGIE;
+			case HERO_PRESTO: return IMAGE_SCL_PRESTO;
+			case HERO_NIKO: return IMAGE_SCL_NIKO;
+			case HERO_MERYL: return IMAGE_SCL_MERYL;
+			case HERO_SHRAPNEL: return IMAGE_SCL_SHRAPNEL;
 			default: return Neon(IMAGE_SCL_STINKY);
 			}
 		}
 
-		static Image* Backdrop(int theTeam) { return theTeam == 0 ? IMAGE_AQUARIUM1 : IMAGE_AQUARIUM4; }
+		// Sprites that face the viewer (no mirroring when they turn).
+		static bool FacesFront(int theHero) { return theHero == HERO_RHUBARB || theHero == HERO_NIKO; }
+
+		static Image* Backdrop(int theArena)
+		{
+			if (theArena == kTrench)
+				return IMAGE_AQUARIUM6 != nullptr ? IMAGE_AQUARIUM6 : IMAGE_AQUARIUM3;
+			return theArena == 0 ? IMAGE_AQUARIUM1 : IMAGE_AQUARIUM4;
+		}
 
 		void PlaySound(uint8_t theSound)
 		{
@@ -293,6 +315,17 @@ namespace Coop
 			case SND_GROW: anId = SOUND_GROW_ID; break;
 			case SND_STINK: anId = SOUND_FART_ID; break;
 			case SND_THUNDER: anId = SOUND_EEL2_ID; break;
+			case SND_CARD: anId = SOUND_RICOCHET_ID; break;
+			case SND_SING: anId = SOUND_SING_ID; break;
+			case SND_MISSILE: anId = SOUND_MISSLE_ID; break;
+			case SND_CLAM_OPEN: anId = SOUND_NIKOOPEN_ID; break;
+			case SND_CLAM_CLOSE: anId = SOUND_NIKOCLOSE_ID; break;
+			case SND_EVOLVE: anId = SOUND_CROWNED_ID; break;
+			case SND_SCREAM: anId = SOUND_PRIMALSCREAM_ID; break;
+			case SND_BIG_SPLASH: anId = SOUND_SPLASHBIG_ID; break;
+			case SND_SONAR: anId = SOUND_SONAR_ID; break;
+			case SND_TONE: anId = SOUND_TONEHI_ID; break;
+			case SND_BOOM: anId = SOUND_EXPLOSION1_ID; break;
 			default: break;
 			}
 			if (anId >= 0)
@@ -300,7 +333,7 @@ namespace Coop
 		}
 
 		///////////////////////////////////////////////////////////////////////
-		// The tank's scenery
+		// The scenery
 		///////////////////////////////////////////////////////////////////////
 		// A small copy of part of an image, made once. Textured triangles need a texture
 		// that fits in one piece; the 640x480 paintings don't.
@@ -369,58 +402,76 @@ namespace Coop
 			g->DrawTrianglesTex(theTex, (const TriVertex(*)[3])aTris.data(), (int)aTris.size() / 3);
 		}
 
-		static void DrawBackdrop(Graphics* g, int theTeam, uint32_t theNow)
+		static void DrawBackdrop(Graphics* g, int theArena, uint32_t theNow, bool theFull)
 		{
-			Image* b = Backdrop(theTeam);
+			Image* b = Backdrop(theArena);
+			Rect aDest((int)SX(0), (int)SY(0), (int)std::ceil(kWorldW * gView.mScale), (int)std::ceil(kWorldH * gView.mScale));
 			if (b != nullptr)
-				g->DrawImage(b, Rect(0, kTop, kScreenW, kHudY - kTop), Rect(0, 0, b->mWidth, b->mHeight));
-			// Deep water: the painting becomes distant scenery behind the play.
-			g->SetColor(Color(0, 18, 44, 160));
-			g->FillRect(0, kTop, kScreenW, kHudY - kTop);
+				g->DrawImage(b, aDest, Rect(0, 0, b->mWidth, b->mHeight));
+			// Deep water: the painting becomes distant scenery behind the play. The Trench is
+			// darker and a little purple (the alien lair's painting).
+			g->SetColor(theArena == kTrench ? Color(10, 4, 34, 175) : Color(0, 18, 44, 160));
+			g->FillRect(aDest);
+			if (!theFull)
+				return;
 			// Light rays.
 			for (int i = 0; i < 5; i++)
 			{
-				float x = 90.0f + i * 125 + 20 * std::sin(theNow / 3000.0f + i);
-				Point p[4] = { Point((int)x, kTop), Point((int)x + 34, kTop), Point((int)x + 90, kHudY - 40), Point((int)x + 20, kHudY - 40) };
-				g->SetColor(Color(200, 230, 255, 14));
+				float x = 180.0f + i * 250 + 40 * std::sin(theNow / 3000.0f + i);
+				Point p[4] = { Point((int)SX(x), (int)SY(0)), Point((int)SX(x + 68), (int)SY(0)), Point((int)SX(x + 180), (int)SY(kWorldH - 80)), Point((int)SX(x + 40), (int)SY(kWorldH - 80)) };
+				g->SetColor(theArena == kTrench ? Color(220, 180, 255, 10) : Color(200, 230, 255, 14));
 				g->PolyFill(p, 4, true);
+			}
+			if (theArena == kTrench)
+			{
+				// Marine snow drifting down.
+				for (int i = 0; i < 40; i++)
+				{
+					float x = std::fmod(i * 131.0f + theNow / (60.0f + i % 7 * 9), kWorldW);
+					float y = std::fmod(i * 71.0f + theNow / (25.0f + i % 5 * 6), kWorldH);
+					Disc(g, SX(x), SY(y), 1.2f + (i % 3) * 0.4f, Color(220, 210, 255, 50 + (i % 4) * 15), 6);
+				}
 			}
 		}
 
-		static void DrawFloor(Graphics* g, int theTeam)
+		static void DrawFloor(Graphics* g, int theArena)
 		{
-			const std::vector<Vec>& f = TheMap().mFloor;
+			const std::vector<Vec>& f = MapOf(theArena).mFloor;
 			// The painting's own sand, tiled along the floor in 256-unit columns.
-			MemoryImage* b = Cut(Backdrop(theTeam), 100, 404, 256, 64);
+			MemoryImage* b = theArena == kTrench ? Cut(Backdrop(theArena), 120, 420, 256, 56) : Cut(Backdrop(theArena), 100, 404, 256, 64);
 			if (b == nullptr)
 				return;
 			const float kTile = 256;
 			std::vector<TriVertex> v;
+			uint32_t aDark = theArena == kTrench ? 0xFF5A4A70 : 0xFF8A8A8A;
 			for (float x = 0; x < kWorldW; x += 32)
 			{
 				float x1 = std::min(kWorldW, x + 32);
 				float u0 = std::fmod(x, kTile) / kTile, u1 = u0 + (x1 - x) / kTile;
-				float y0 = FloorY(x), y1 = FloorY(x1);
+				float y0 = FloorY(theArena, x), y1 = FloorY(theArena, x1);
 				TriVertex t0(SX(x), SY(y0), u0, 0, 0xFFFFFFFF), t1(SX(x1), SY(y1), u1, 0, 0xFFFFFFFF);
-				TriVertex b0(SX(x), SY(kWorldH), u0, 1, 0xFF8A8A8A), b1(SX(x1), SY(kWorldH), u1, 1, 0xFF8A8A8A);
+				TriVertex b0(SX(x), SY(kWorldH), u0, 1, aDark), b1(SX(x1), SY(kWorldH), u1, 1, aDark);
 				v.push_back(t0); v.push_back(t1); v.push_back(b1);
 				v.push_back(t0); v.push_back(b1); v.push_back(b0);
 			}
 			g->DrawTrianglesTex(b, (const TriVertex(*)[3])v.data(), (int)v.size() / 3);
-			// The rim of the floor.
 			g->SetColor(Color(255, 240, 200, 90));
 			for (size_t i = 1; i < f.size(); i++)
 				g->DrawLine((int)SX(f[i - 1].x), (int)SY(f[i - 1].y), (int)SX(f[i].x), (int)SY(f[i].y));
 		}
 
 		// Walls are solid slate blocks (D35): a bevel (edges facing up are lit, edges facing
-		// down are shaded), a flat face, and a thick dark outline, so they read as things
-		// you bump into rather than part of the painted scenery.
-		static void DrawWalls(Graphics* g)
+		// down are shaded), a flat face, and a thick dark outline. Trench rock is darker.
+		static void DrawWalls(Graphics* g, int theArena)
 		{
-			const Color kLit(228, 238, 250), kSide(168, 182, 202), kShade(72, 84, 106), kFace(150, 166, 188), kEdge(12, 15, 22);
+			bool aDeep = theArena == kTrench;
+			const Color kLit = aDeep ? Color(196, 180, 236) : Color(228, 238, 250);
+			const Color kSide = aDeep ? Color(134, 116, 176) : Color(168, 182, 202);
+			const Color kShade = aDeep ? Color(54, 40, 86) : Color(72, 84, 106);
+			const Color kFace = aDeep ? Color(112, 96, 156) : Color(150, 166, 188);
+			const Color kEdge(12, 10, 22);
 			const float kBevel = 11, kOutline = 3.2f;
-			for (const WallDef& w : TheMap().mWalls)
+			for (const WallDef& w : MapOf(theArena).mWalls)
 			{
 				const std::vector<Vec>& p = w.mPoly;
 				size_t n = p.size();
@@ -441,7 +492,7 @@ namespace Coop
 					Vec anOut(b.y - a.y, a.x - b.x);
 					if ((anOut.x * ((a.x + b.x) / 2 - c.x) + anOut.y * ((a.y + b.y) / 2 - c.y)) < 0)
 						anOut = anOut * -1.0f;
-					float aUp = -anOut.y / std::max(0.01f, Len(anOut));		// 1: faces straight up
+					float aUp = -anOut.y / std::max(0.01f, Len(anOut));
 					g->SetColor(aUp > 0.35f ? kLit : (aUp < -0.35f ? kShade : kSide));
 					Point t[3] = { Point((int)SX(c.x), (int)SY(c.y)), Point((int)SX(a.x), (int)SY(a.y)), Point((int)SX(b.x), (int)SY(b.y)) };
 					g->PolyFill(t, 3, true);
@@ -462,15 +513,16 @@ namespace Coop
 					Point q[4] = { Point((int)SX(a.x + m.x), (int)SY(a.y + m.y)), Point((int)SX(b.x + m.x), (int)SY(b.y + m.y)),
 						Point((int)SX(b.x - m.x), (int)SY(b.y - m.y)), Point((int)SX(a.x - m.x), (int)SY(a.y - m.y)) };
 					g->PolyFill(q, 4, true);
-					Disc(g, SX(a.x), SY(a.y), SX(kOutline), kEdge, 8);
+					Disc(g, SX(a.x), SY(a.y), kOutline * gView.mScale, kEdge, 8);
 				}
 			}
 		}
 
 		// Swaying kelp; theFront draws a see-through layer over whatever hides inside.
-		static void DrawKelp(Graphics* g, uint32_t theNow, bool theFront)
+		static void DrawKelp(Graphics* g, int theArena, uint32_t theNow, bool theFront)
 		{
-			const std::vector<KelpDef>& aKelp = TheMap().mKelp;
+			const std::vector<KelpDef>& aKelp = MapOf(theArena).mKelp;
+			bool aDeep = theArena == kTrench;
 			for (size_t k = 0; k < aKelp.size(); k++)
 			{
 				const KelpDef& p = aKelp[k];
@@ -481,9 +533,10 @@ namespace Coop
 						continue;
 					float x = p.mX0 + (s + 0.5f) * (p.mX1 - p.mX0) / n;
 					float aTop = p.mY0 + ((s * 37 + (int)k * 13) % 50);
-					float aBottom = std::min(p.mY1, FloorY(x)) + 4;
+					float aBottom = std::min(p.mY1, FloorY(theArena, x)) + 4;
 					int aSegs = 10;
-					Color c = theFront ? Color(40, 160, 70, 150) : Color(30 + (s * 20) % 40, 120 + (s * 17) % 50, 50, 235);
+					Color c = theFront ? (aDeep ? Color(120, 70, 170, 150) : Color(40, 160, 70, 150))
+						: (aDeep ? Color(80 + (s * 20) % 40, 50, 120 + (s * 17) % 50, 235) : Color(30 + (s * 20) % 40, 120 + (s * 17) % 50, 50, 235));
 					for (int i = 0; i < aSegs; i++)
 					{
 						float t0 = (float)i / aSegs, t1 = (float)(i + 1) / aSegs;
@@ -496,20 +549,47 @@ namespace Coop
 						g->SetColor(c);
 						g->PolyFill(q, 4, true);
 						if (i % 2 == 1 && !theFront)
-							Disc(g, SX(x + sw1 + (i % 4 == 1 ? 10.0f : -10.0f)), SY(y1), 3.5f, Color(60, 190, 90, 220), 8);
+							Disc(g, SX(x + sw1 + (i % 4 == 1 ? 10.0f : -10.0f)), SY(y1), 7 * gView.mScale, aDeep ? Color(170, 110, 230, 220) : Color(60, 190, 90, 220), 8);
 					}
 				}
 			}
 		}
 
-		static void DrawPortal(Graphics* g, uint32_t theNow)
+		static void Warp(Graphics* g, Vec p, float r, uint32_t theNow, const Color& theRim, float theScale)
 		{
-			const MapDef& m = TheMap();
-			float r = m.mPortalR;
-			Disc(g, SX(m.mPortal.x), SY(m.mPortal.y), SX(r * 1.25f), Color(120, 60, 200, 60));
+			Disc(g, SX(p.x), SY(p.y), r * 1.25f * gView.mScale, Color(theRim.mRed / 2, theRim.mGreen / 3, theRim.mBlue, 60));
 			if (IMAGE_WARPHOLE != nullptr)
-				Sprite(g, IMAGE_WARPHOLE, (theNow / 70) % 17, 0, m.mPortal.x, m.mPortal.y, 0.62f, false);
-			Ring(g, SX(m.mPortal.x), SY(m.mPortal.y), SX(r), Color(210, 160, 255, 90 + (int)(60 * std::sin(theNow / 300.0f))), 2);
+				Sprite(g, IMAGE_WARPHOLE, (theNow / 70) % 17, 0, p.x, p.y, theScale, false);
+			Ring(g, SX(p.x), SY(p.y), r * gView.mScale, Color(theRim.mRed, theRim.mGreen, theRim.mBlue, 90 + (int)(60 * std::sin(theNow / 300.0f))), 2);
+		}
+
+		static void DrawPortals(Graphics* g, int theArena, int theMyTeam, uint32_t theNow, bool theFull)
+		{
+			const MapDef& m = MapOf(theArena);
+			if (theArena == kTrench)
+			{
+				// A gate at each end, ringed in its team's color; the lane between them.
+				for (int t = 0; t < 2; t++)
+				{
+					Warp(g, m.mGate[t], m.mGateR, theNow, TeamColor(t), 0.7f);
+					if (theFull)
+						Centered(g, FONT_TINYBOLD, t == theMyTeam ? "HOME" : "RIVAL", (int)SX(m.mGate[t].x), (int)SY(m.mGate[t].y - m.mGateR - 12), TeamColor(t));
+				}
+				if (theFull)
+				{
+					const std::vector<Vec>& l = m.mTrenchLane;
+					for (size_t i = 1; i < l.size(); i++)
+						for (float t = 0; t < 1; t += 0.08f)
+						{
+							Vec p = Lerp(l[i - 1], l[i], t);
+							Disc(g, SX(p.x), SY(p.y + 40), 3 * gView.mScale, Color(230, 200, 255, 26), 6);
+						}
+				}
+				return;
+			}
+			Warp(g, m.mPortal, m.mPortalR, theNow, Color(210, 160, 255), 0.62f);
+			if (theFull)
+				Centered(g, FONT_TINYBOLD, "TO THE TRENCH", (int)SX(m.mPortal.x), (int)SY(m.mPortal.y - m.mPortalR - 10), Color(220, 190, 255, 200));
 			// Floor pads, and the portal's beam down to the floor (walkers ride it).
 			for (int i = 0; i < 2; i++)
 			{
@@ -522,11 +602,11 @@ namespace Coop
 					g->SetColor(Color(180, 120, 255, 30 + k * 20));
 					g->PolyFill(q, 4, true);
 				}
-				Ring(g, SX(p.x), SY(p.y - 4), SX(m.mPadR), Color(200, 150, 255, 150));
+				Ring(g, SX(p.x), SY(p.y - 4), m.mPadR * gView.mScale, Color(200, 150, 255, 150));
 			}
 			float x = m.mPortal.x;
-			Point q[4] = { Point((int)SX(x - 16), (int)SY(m.mPortal.y + r)), Point((int)SX(x + 16), (int)SY(m.mPortal.y + r)),
-				Point((int)SX(x + 34), (int)SY(FloorY(x))), Point((int)SX(x - 34), (int)SY(FloorY(x))) };
+			Point q[4] = { Point((int)SX(x - 16), (int)SY(m.mPortal.y + m.mPortalR)), Point((int)SX(x + 16), (int)SY(m.mPortal.y + m.mPortalR)),
+				Point((int)SX(x + 34), (int)SY(FloorY(theArena, x))), Point((int)SX(x - 34), (int)SY(FloorY(theArena, x))) };
 			g->SetColor(Color(190, 140, 255, 16));
 			g->PolyFill(q, 4, true);
 		}
@@ -536,66 +616,60 @@ namespace Coop
 		///////////////////////////////////////////////////////////////////////
 		static void DrawTower(Graphics* g, int theArena, int theIndex, const ArenaSnap& s, uint32_t theNow, bool theFiring)
 		{
-			const MapDef& m = TheMap();
+			const MapDef& m = TankMap();
 			Vec p = m.mTower[theIndex];
-			float aBase = FloorY(p.x);
+			float aBase = FloorY(theArena, p.x);
 			bool aAlive = s.mTowerHp[theIndex] > 0;
-			// The pedestal: a stone column.
 			std::vector<Vec> aCol = { Vec(p.x - 34, aBase + 4), Vec(p.x - 26, p.y - 20), Vec(p.x + 26, p.y - 20), Vec(p.x + 34, aBase + 4) };
 			if (!aAlive)
 				aCol = { Vec(p.x - 40, aBase + 4), Vec(p.x - 30, aBase - 30), Vec(p.x - 6, aBase - 44), Vec(p.x + 20, aBase - 26), Vec(p.x + 40, aBase + 4) };
 			TexturedPoly(g, StoneTex(), aCol, 0, 0, 1, 1, 0xFF707080);
 			if (!aAlive)
 				return;
-			Color c = kTeamColor[theArena];
-			// A glow in the owner's color, then Niko's clam on top: it opens to fire pearls.
-			Disc(g, SX(p.x), SY(p.y - 34), SX(44), Color(c.mRed, c.mGreen, c.mBlue, 50));
+			const Color& c = TeamColor(theArena);
+			Disc(g, SX(p.x), SY(p.y - 34), 44 * gView.mScale, Color(c.mRed, c.mGreen, c.mBlue, 50));
 			int aRow = theFiring ? 1 : 0;
 			int aCol2 = theFiring ? 9 : (int)((theNow / 150 + theIndex * 3) % 10);
 			bool aBlind = (s.mTowerBlind >> theIndex) & 1;
 			Sprite(g, IMAGE_NIKO, aCol2, aRow, p.x, p.y - 44, 1.45f, false, aBlind ? Color(140, 200, 120) : Color(255, 255, 255), aBlind);
 			if (s.mTowerShield[theIndex] > 0)
-				Ring(g, SX(p.x), SY(p.y - 30), SX(70), Color(255, 245, 170, 170), 2);
-			// Health.
+				Ring(g, SX(p.x), SY(p.y - 30), 70 * gView.mScale, Color(255, 245, 170, 170), 2);
 			float aFrac = s.mTowerHp[theIndex] / std::max(1.0f, s.mTowerMax);
-			Bar(g, (int)SX(p.x - 44), (int)SY(p.y - 104), (int)SX(88), 3, aFrac, aFrac > 0.5f ? Color(90, 230, 110) : (aFrac > 0.25f ? Color(240, 210, 60) : Color(240, 80, 60)));
+			Bar(g, (int)SX(p.x - 44), (int)SY(p.y - 104), (int)(88 * gView.mScale), gView.mScale < 0.3f ? 1 : 3, aFrac, aFrac > 0.5f ? Color(90, 230, 110) : (aFrac > 0.25f ? Color(240, 210, 60) : Color(240, 80, 60)));
 		}
 
 		static void DrawCore(Graphics* g, int theArena, const ArenaSnap& s, uint32_t theNow)
 		{
-			const MapDef& m = TheMap();
+			const MapDef& m = TankMap();
 			Vec p = m.mCore;
-			Color c = kTeamColor[theArena];
+			const Color& c = TeamColor(theArena);
 			bool aOpen = s.mTowerHp[0] <= 0 && s.mTowerHp[1] <= 0;
-			Disc(g, SX(p.x), SY(p.y + 10), SX(96), Color(c.mRed, c.mGreen, c.mBlue, 44));
+			Disc(g, SX(p.x), SY(p.y + 10), 96 * gView.mScale, Color(c.mRed, c.mGreen, c.mBlue, 44));
 			if (s.mCoreHp > 0)
 				Sprite(g, IMAGE_MONEY, (theNow / 90) % 10, 4, p.x, p.y - 6, 2.5f, false);
 			else
 				Sprite(g, IMAGE_MONEY, 0, 4, p.x, p.y, 2.2f, false, Color(90, 80, 80), true);
 			if (!aOpen && s.mCoreHp > 0)
 			{
-				// Protected while a tower stands: a faint bubble.
-				Ring(g, SX(p.x), SY(p.y - 10), SX(96), Color(200, 230, 255, 70 + (int)(30 * std::sin(theNow / 400.0f))), 1);
-				Disc(g, SX(p.x), SY(p.y - 10), SX(92), Color(200, 230, 255, 18));
+				Ring(g, SX(p.x), SY(p.y - 10), 96 * gView.mScale, Color(200, 230, 255, 70 + (int)(30 * std::sin(theNow / 400.0f))), 1);
+				Disc(g, SX(p.x), SY(p.y - 10), 92 * gView.mScale, Color(200, 230, 255, 18));
 			}
 			if (s.mCoreShield > 0)
-				Ring(g, SX(p.x), SY(p.y - 10), SX(104), Color(255, 245, 170, 180), 2);
+				Ring(g, SX(p.x), SY(p.y - 10), 104 * gView.mScale, Color(255, 245, 170, 180), 2);
 			float aFrac = s.mCoreHp / kCoreHealth;
-			Bar(g, (int)SX(p.x - 80), (int)SY(p.y - 100), (int)SX(160), 4, aFrac, aOpen ? Color(240, 90, 60) : Color(255, 210, 80));
+			Bar(g, (int)SX(p.x - 80), (int)SY(p.y - 100), (int)(160 * gView.mScale), gView.mScale < 0.3f ? 1 : 4, aFrac, aOpen ? Color(240, 90, 60) : Color(255, 210, 80));
 		}
 
 		///////////////////////////////////////////////////////////////////////
 		// Creatures
 		///////////////////////////////////////////////////////////////////////
-		static void DrawFish(Graphics* g, const FishSnap& f, uint32_t theNow)
+		static void DrawFish(Graphics* g, const FishSnap& f, uint32_t theNow, bool theMarkHungry)
 		{
 			int aFrame = (int)((theNow / 90 + f.mId * 3) % 10);
 			bool aMirror = (f.mFlags & FF_RIGHT) != 0;
 			bool aHungry = (f.mFlags & FF_HUNGRY) != 0;
 			if (f.mFlags & FF_DYING)
 			{
-				// The death sheet has guppies (by size) and the carnivore; a breeder dies as
-				// itself, greyed (as in Insaniquarium).
 				if (f.mKind == FISH_BREEDER)
 				{
 					Sprite(g, IMAGE_HUNGRYBREEDER, aFrame, 3, f.mPos.x, f.mPos.y, 1.0f, aMirror, Color(170, 170, 170, 160), true);
@@ -604,6 +678,8 @@ namespace Coop
 				Sprite(g, IMAGE_SMALLDIE, aFrame, f.mKind == FISH_CARNIVORE ? 4 : std::min<int>(f.mSize, 2), f.mPos.x, f.mPos.y, 1.0f, aMirror, Color(255, 255, 255, 160));
 				return;
 			}
+			if (theMarkHungry && aHungry)
+				Disc(g, SX(f.mPos.x), SY(f.mPos.y), 34 * gView.mScale, Color(255, 80, 60, 70 + (int)(50 * std::sin(theNow / 150.0f))));
 			switch (f.mKind)
 			{
 			case FISH_GUPPY:
@@ -618,42 +694,104 @@ namespace Coop
 			}
 		}
 
-		static Image* MinionImage(int theKind)
+		Image* MinionImage(int theKind)
 		{
 			switch (theKind)
 			{
 			case MIN_MINI: return IMAGE_MINISYLV;
 			case MIN_SYLV: return IMAGE_SYLV;
-			case MIN_GUS: return IMAGE_GUS;
-			case MIN_BALROG: return IMAGE_BALROG;
+			case MIN_GUS: case MIN_CAMP_GUS: return IMAGE_GUS;
+			case MIN_BALROG: case MIN_CAMP_BALROG: return IMAGE_BALROG;
+			case MIN_SQUID: case MIN_PSYCHO: return IMAGE_PSYCHOSQUID;
+			case MIN_BOSS: return IMAGE_BOSS;
 			default: return IMAGE_DESTRUCTOR;
 			}
 		}
 
-		static void DrawMinion(Graphics* g, const MinionSnap& m, uint32_t theNow)
+		static void DrawMinion(Graphics* g, const MinionSnap& m, uint32_t theNow, bool theFull)
 		{
 			Image* anImg = MinionImage(m.mKind);
 			int aFrame = (int)((theNow / 70 + m.mId) % 10);
+			const MinionDef& d = MinionDefOf(m.mKind);
+			bool aMonster = m.mTeam == kNeutralTeam;
 			float aScale = m.mKind == MIN_MINI ? 1.0f : 0.8f;
 			bool aMirror = (m.mFlags & MF_RIGHT) != 0;
-			int aRow = (m.mKind == MIN_GUS && (m.mFlags & MF_ATTACKING)) ? 2 : 0;
+			int aRow = (m.mKind == MIN_GUS || m.mKind == MIN_CAMP_GUS) && (m.mFlags & MF_ATTACKING) ? 2 : 0;
+			switch (m.mKind)
+			{
+			case MIN_SQUID:			// the Squid's gift: calm blue, smaller
+				aScale = 0.75f;
+				aRow = 2;
+				aMirror = false;
+				break;
+			case MIN_PSYCHO:		// red when angry, blue when calm
+				aScale = 0.95f;
+				aRow = (m.mFlags & MF_ANGRY) ? 0 : 2;
+				aMirror = false;
+				break;
+			case MIN_BOSS:
+				aScale = 1.25f;
+				aRow = 0;
+				aMirror = false;
+				break;
+			case MIN_CAMP_GUS: case MIN_CAMP_BALROG:
+				aScale = 0.85f;
+				break;
+			default:
+				break;
+			}
 			Color aTint = (m.mFlags & MF_CHARMED) ? Color(255, 150, 220) : Color(255, 255, 255);
-			// Whose side it's on: a faint ring in that player's color.
-			float rr = MinionDefOf(m.mKind).mRadius * 0.8f;
-			Color tc = kTeamColor[m.mTeam % 2];
-			Ring(g, SX(m.mPos.x), SY(m.mPos.y), SX(rr), Color(tc.mRed, tc.mGreen, tc.mBlue, 110), 1);
+			float rr = d.mRadius * 0.8f;
+			const Color& tc = TeamColor(m.mTeam);
+			if (aMonster)
+			{
+				// A monster: a glow ring, brighter when it's fighting.
+				bool aAngry = (m.mFlags & MF_ANGRY) != 0;
+				Disc(g, SX(m.mPos.x), SY(m.mPos.y + d.mRadius * 0.6f), d.mRadius * 0.9f * gView.mScale, Color(150, 70, 220, aAngry ? 70 : 34));
+				Ring(g, SX(m.mPos.x), SY(m.mPos.y), (d.mRadius + 6) * gView.mScale, aAngry ? Color(255, 90, 80, 170) : Color(200, 140, 255, 90), aAngry ? 2 : 1);
+			}
+			else
+			{
+				// Whose side it's on: a glow in that team's color (the Trench has both).
+				Disc(g, SX(m.mPos.x), SY(m.mPos.y), rr * 1.25f * gView.mScale, Color(tc.mRed, tc.mGreen, tc.mBlue, 70), 14);
+				Ring(g, SX(m.mPos.x), SY(m.mPos.y), rr * 1.25f * gView.mScale, Color(tc.mRed, tc.mGreen, tc.mBlue, 170), 1);
+			}
+			if (m.mFlags & MF_RALLIED)
+				Disc(g, SX(m.mPos.x), SY(m.mPos.y), (rr + 4) * gView.mScale, Color(255, 120, 200, 50));
 			Sprite(g, anImg, aFrame, aRow, m.mPos.x, m.mPos.y, aScale, aMirror, aTint, (m.mFlags & MF_CHARMED) != 0);
-			float r = MinionDefOf(m.mKind).mRadius;
-			if (m.mHpFrac < 0.999f)
-				Bar(g, (int)SX(m.mPos.x - r), (int)SY(m.mPos.y - r - 16), (int)SX(r * 2), 2, m.mHpFrac, Color(240, 90, 70));
-			if (m.mFlags & MF_STUNNED)
+			float r = d.mRadius;
+			if (m.mHpFrac < 0.999f || (theFull && (aMonster || m.mKind == MIN_SQUID)))
+			{
+				int w = (int)((aMonster ? r * 2.4f : r * 2) * gView.mScale);
+				Bar(g, (int)SX(m.mPos.x) - w / 2, (int)SY(m.mPos.y - r - 16), w, aMonster && gView.mScale > 0.3f ? 3 : 2, m.mHpFrac, aMonster ? Color(200, 120, 255) : (m.mTeam == 0 ? Color(240, 170, 60) : Color(90, 190, 255)));
+			}
+			if (aMonster && theFull && (m.mKind == MIN_PSYCHO || m.mKind == MIN_BOSS))
+				Centered(g, FONT_TINYBOLD, d.mName, (int)SX(m.mPos.x), (int)SY(m.mPos.y - r - 22), Color(230, 200, 255));
+			if (m.mFlags & (MF_STUNNED | MF_ASLEEP))
 				Sprite(g, IMAGE_ZZZ, 0, 0, m.mPos.x + r * 0.5f, m.mPos.y - r - 20, 1.0f, false);
 		}
 
-		static void DrawHero(Graphics* g, const HeroSnap& h, uint32_t theNow, bool theMine, const std::string& theName)
+		// What the hero's sprite and scale are (evolution, buffs, Fortress).
+		static float HeroScale(const HeroSnap& h)
+		{
+			float s = 1.35f;
+			if (h.mLevel >= kEvolveLevel)
+				s *= kEvolveScale;
+			if (h.mBuffS[BUFF_GUS] > 0)
+				s *= kGusScale;
+			if (h.mFlags & HF_FORTRESS)
+				s *= 1.8f;
+			return s;
+		}
+
+		// Recently hurt heroes flash white (per player, on this screen).
+		static uint32_t sFlashUntil[kMaxPlayers] = { 0, 0, 0, 0 };
+		static float sLastHp[kMaxPlayers] = { -1, -1, -1, -1 };
+
+		static void DrawHero(Graphics* g, const HeroSnap& h, uint32_t theNow, bool theMine, const std::string& theName, bool theFull)
 		{
 			const HeroDef& d = HeroDefOf(h.mHero);
-			Color c = kTeamColor[h.mTeam % 2];
+			const Color& c = TeamColor(h.mTeam);
 			if (!(h.mFlags & HF_ALIVE))
 			{
 				Sprite(g, HeroImage(h.mHero), 0, 0, h.mPos.x, h.mPos.y, 1.2f, false, Color(120, 120, 140, 110), true);
@@ -661,57 +799,119 @@ namespace Coop
 			}
 			int aAlpha = (h.mFlags & HF_HIDDEN) ? 110 : ((h.mFlags & HF_UNTARGETABLE) ? 90 : 255);
 			bool aRight = (h.mFlags & HF_RIGHT) != 0;
-			// A ring in the owner's color.
 			float r = d.mRadius;
-			Ring(g, SX(h.mPos.x), SY(h.mPos.y + (d.mWalker ? r * 0.6f : 0)), SX(r + 6), Color(c.mRed, c.mGreen, c.mBlue, aAlpha * 7 / 10), 2);
+			float aScale = HeroScale(h);
+			bool aEvolved = h.mLevel >= kEvolveLevel;
+			// Auras under the hero: evolution glow, the Boss's surge, Balrog's fire, Anthem.
+			if (h.mBuffS[BUFF_BOSS] > 0)
+			{
+				float p = 0.5f + 0.5f * std::sin(theNow / 120.0f);
+				g->SetDrawMode(Graphics::DRAWMODE_ADDITIVE);
+				Disc(g, SX(h.mPos.x), SY(h.mPos.y), (r * 2.1f + 8 * p) * gView.mScale, Color(255, 90, 30, 70));
+				g->SetDrawMode(Graphics::DRAWMODE_NORMAL);
+				Ring(g, SX(h.mPos.x), SY(h.mPos.y), (r * 2.2f + 8 * p) * gView.mScale, Color(255, 200, 60, 200), 2);
+			}
+			if (aEvolved)
+			{
+				g->SetDrawMode(Graphics::DRAWMODE_ADDITIVE);
+				Disc(g, SX(h.mPos.x), SY(h.mPos.y), r * 1.7f * gView.mScale, Color(c.mRed, c.mGreen, c.mBlue, 38 + (int)(14 * std::sin(theNow / 300.0f))));
+				g->SetDrawMode(Graphics::DRAWMODE_NORMAL);
+			}
+			if (h.mFlags & HF_ANTHEM)
+				for (int k = 0; k < 3; k++)
+				{
+					float a = theNow / 300.0f + k * 2.09f;
+					Text(g, FONT_TINYBOLD, k == 1 ? "~" : "#", (int)SX(h.mPos.x + std::cos(a) * r * 1.6f), (int)SY(h.mPos.y + std::sin(a) * r * 1.2f), Color(255, 150, 230, aAlpha));
+				}
+			// A ring in the owner's color.
+			Ring(g, SX(h.mPos.x), SY(h.mPos.y + (d.mWalker ? r * 0.6f : 0)), (r * aScale / 1.35f + 6) * gView.mScale, Color(c.mRed, c.mGreen, c.mBlue, aAlpha * 7 / 10), aEvolved ? 3 : 2);
 			Image* anImg = HeroImage(h.mHero);
 			int aFrame = (int)((theNow / 75) % 10);
 			int aRow = 0;
-			bool aMirror = aRight;
+			bool aMirror = FacesFront(h.mHero) ? false : aRight;
 			switch (h.mHero)
 			{
 			case HERO_ITCHY: aRow = (h.mFlags & (HF_ATTACKING | HF_STORM)) ? 2 : 0; break;
-			case HERO_RHUBARB: aRow = (h.mFlags & HF_ATTACKING) ? 1 : 0; aMirror = false; break;
+			case HERO_RHUBARB: aRow = (h.mFlags & HF_ATTACKING) ? 1 : 0; break;
 			case HERO_SPEEDY: aRow = (h.mFlags & HF_IMMUNE) ? 2 : 0; if (h.mFlags & HF_IMMUNE) aFrame = 9; break;
+			case HERO_NIKO:
+				// Closed while shielded; open, pearl showing, when it attacks or holds the fort.
+				aRow = (h.mFlags & HF_CLAM) ? 0 : ((h.mFlags & (HF_ATTACKING | HF_FORTRESS)) ? 1 : 0);
+				aFrame = (h.mFlags & HF_CLAM) ? 0 : ((h.mFlags & (HF_ATTACKING | HF_FORTRESS)) ? 9 : aFrame);
+				break;
+			case HERO_MERYL: aRow = (h.mFlags & HF_ATTACKING) ? 2 : 0; if (h.mFlags & HF_ATTACKING) aFrame = 3 + aFrame % 3; break;
 			default: break;
 			}
-			float aScale = 1.35f;
+			uint32_t aFlash = sFlashUntil[h.mPlayer % kMaxPlayers];
+			bool aFlashing = !Elapsed(theNow, aFlash);
 			if (h.mFlags & HF_STORM)
 			{
-				// Swordstorm: spin.
 				Transform t;
 				t.RotateRad(theNow / 60.0f);
-				t.Scale(aScale * kScale, aScale * kScale);
+				t.Scale(aScale * gView.mScale, aScale * gView.mScale);
 				g->DrawImageTransformF(anImg, t, anImg->GetCelRect(aFrame, 0), SX(h.mPos.x), SY(h.mPos.y));
-				Ring(g, SX(h.mPos.x), SY(h.mPos.y), SX(110), Color(220, 240, 255, 120), 1);
+				Ring(g, SX(h.mPos.x), SY(h.mPos.y), 110 * gView.mScale, Color(220, 240, 255, 120), 1);
 			}
 			else
 			{
 				if (h.mHero == HERO_SPEEDY)
 				{
-					// Speedy's neon glow.
 					g->SetDrawMode(Graphics::DRAWMODE_ADDITIVE);
 					Sprite(g, anImg, aFrame, aRow, h.mPos.x, h.mPos.y, aScale * 1.12f, aMirror, Color(170, 60, 255, aAlpha * 65 / 100), true);
 					g->SetDrawMode(Graphics::DRAWMODE_NORMAL);
 				}
-				Sprite(g, anImg, aFrame, aRow, h.mPos.x, h.mPos.y, aScale, aMirror, Color(255, 255, 255, aAlpha));
+				Color aTint(255, 255, 255, aAlpha);
+				bool aColorize = false;
+				if (h.mHero == HERO_NIKO)
+				{
+					aTint = Color(255, 225, 190, aAlpha);	// warmer than the towers' clams
+					aColorize = true;
+				}
+				Sprite(g, anImg, aFrame, aRow, h.mPos.x, h.mPos.y, aScale, aMirror, aTint, aColorize);
+				if (aFlashing)
+				{
+					g->SetDrawMode(Graphics::DRAWMODE_ADDITIVE);
+					Sprite(g, anImg, aFrame, aRow, h.mPos.x, h.mPos.y, aScale, aMirror, Color(255, 255, 255, 150), true);
+					g->SetDrawMode(Graphics::DRAWMODE_NORMAL);
+				}
+				if (h.mFlags & HF_BURNING)
+					for (int k = 0; k < 4; k++)
+					{
+						float a = theNow / 160.0f + k * 1.57f;
+						Disc(g, SX(h.mPos.x + std::cos(a) * r * 0.9f), SY(h.mPos.y - r * 0.4f + std::sin(a * 1.7f) * r * 0.4f), 5 * gView.mScale, Color(255, 120 + k * 30, 40, 170), 8);
+					}
+			}
+			if (h.mFlags & HF_COPY)
+			{
+				// Presto in disguise: a sparkle gives it away, if you look closely.
+				Sprite(g, IMAGE_SPARKLE, (theNow / 60) % 14, 0, h.mPos.x + r * 0.7f, h.mPos.y - r * 0.8f, 1.0f, false);
 			}
 			if (h.mFlags & HF_IMMUNE)
-				Ring(g, SX(h.mPos.x), SY(h.mPos.y), SX(r + 12), Color(255, 240, 150, 200), 2);
+				Ring(g, SX(h.mPos.x), SY(h.mPos.y), (r + 12) * gView.mScale, Color(255, 240, 150, 200), 2);
+			if (h.mFlags & HF_CLAM)
+				Ring(g, SX(h.mPos.x), SY(h.mPos.y), (r * aScale / 1.35f + 14) * gView.mScale, Color(240, 200, 255, 200), 3);
 			if (h.mShield > 0)
-				Ring(g, SX(h.mPos.x), SY(h.mPos.y), SX(r + 16), Color(255, 250, 200, 160), 1);
-			if (h.mFlags & HF_STUNNED)
+				Ring(g, SX(h.mPos.x), SY(h.mPos.y), (r + 16) * gView.mScale, Color(255, 250, 200, 160), 1);
+			if (h.mFlags & (HF_STUNNED | HF_ASLEEP))
 				Sprite(g, IMAGE_ZZZ, 0, 0, h.mPos.x + 10, h.mPos.y - r - 30, 1.2f, false);
 			if (h.mFlags & HF_GOLDRUSH)
-				Ring(g, SX(h.mPos.x), SY(h.mPos.y), SX(r + 20 + 6 * std::sin(theNow / 90.0f)), Color(255, 220, 60, 160), 2);
+				Ring(g, SX(h.mPos.x), SY(h.mPos.y), (r + 20 + 6 * std::sin(theNow / 90.0f)) * gView.mScale, Color(255, 220, 60, 160), 2);
+			if (!theFull)
+			{
+				Disc(g, SX(h.mPos.x), SY(h.mPos.y), 3, Color(c.mRed, c.mGreen, c.mBlue, 230), 8);
+				return;
+			}
 			// Name, level and health.
-			int bx = (int)SX(h.mPos.x - 34), by = (int)SY(h.mPos.y - r - 30);
-			Bar(g, bx, by, (int)SX(68), 3, h.mHp / std::max(1.0f, h.mMaxHp), theMine ? Color(110, 240, 110) : Color(250, 90, 80));
+			int bw = (int)(68 * aScale / 1.35f), bx = (int)SX(h.mPos.x) - bw / 2, by = (int)SY(h.mPos.y - r * aScale / 1.35f - 30);
+			Bar(g, bx, by, bw, 3, h.mHp / std::max(1.0f, h.mMaxHp), theMine ? Color(110, 240, 110) : Color(250, 90, 80));
 			if (h.mShield > 0)
-				Bar(g, bx, by - 3, (int)(SX(68) * std::min(1.0f, h.mShield / std::max(1.0f, h.mMaxHp))), 1, 1, Color(255, 250, 200), Color(0, 0, 0, 0));
-			Disc(g, bx - 5.0f, by + 1.5f, 5, Color(20, 20, 40, 220), 12);
-			Centered(g, FONT_TINYBOLD, std::to_string(h.mLevel), bx - 5, by + 5, Color(255, 240, 180));
-			Centered(g, FONT_TINY, theName, (int)SX(h.mPos.x), by - 3, Color(c.mRed, c.mGreen, c.mBlue, aAlpha));
+				Bar(g, bx, by - 3, (int)(bw * std::min(1.0f, h.mShield / std::max(1.0f, h.mMaxHp))), 1, 1, Color(255, 250, 200), Color(0, 0, 0, 0));
+			Disc(g, bx - 5.0f, by + 1.5f, 5, aEvolved ? Color(80, 40, 10, 230) : Color(20, 20, 40, 220), 12);
+			Centered(g, FONT_TINYBOLD, std::to_string(h.mLevel), bx - 5, by + 5, aEvolved ? Color(255, 210, 90) : Color(255, 240, 180));
+			std::string aName = theName;
+			if (h.mStreak >= kShutdownStreak)
+				aName += " *" + std::to_string(h.mStreak);
+			Centered(g, FONT_TINY, aName, (int)SX(h.mPos.x), by - 3, Color(c.mRed, c.mGreen, c.mBlue, aAlpha));
 		}
 
 		///////////////////////////////////////////////////////////////////////
@@ -725,11 +925,20 @@ namespace Coop
 			case LOOK_ANGIE_ATTACK: case LOOK_HALO: case LOOK_RESURRECT: return Color(255, 235, 150);
 			case LOOK_STINK: case LOOK_SLIME: return Color(140, 230, 80);
 			case LOOK_GOLD: return Color(255, 210, 60);
-			case LOOK_DESTRUCTOR: return Color(255, 120, 60);
-			case LOOK_CHARM: return Color(255, 140, 220);
+			case LOOK_DESTRUCTOR: case LOOK_BOMB: case LOOK_MISSILE: return Color(255, 120, 60);
+			case LOOK_CHARM: case LOOK_SIREN: case LOOK_ANTHEM: return Color(255, 140, 220);
 			case LOOK_SLAM: case LOOK_LEAP: return Color(230, 200, 150);
 			case LOOK_STORM: case LOOK_LUNGE: return Color(220, 250, 255);
-			case LOOK_TELEPORT: return Color(200, 160, 255);
+			case LOOK_TELEPORT: case LOOK_SPARKLE: return Color(200, 160, 255);
+			case LOOK_CARD: return Color(255, 255, 255);
+			case LOOK_PEARL: case LOOK_FORTRESS: return Color(255, 225, 240);
+			case LOOK_NOTE: return Color(255, 170, 240);
+			case LOOK_SLEEP: return Color(170, 190, 255);
+			case LOOK_MINE: return Color(255, 90, 60);
+			case LOOK_INK: return Color(40, 30, 70);
+			case LOOK_BURN: return Color(255, 110, 40);
+			case LOOK_EVOLVE: return Color(255, 240, 160);
+			case LOOK_BOSS: return Color(255, 80, 60);
 			default: return Color(255, 255, 255);
 			}
 		}
@@ -752,13 +961,55 @@ namespace Coop
 			}
 		}
 
-		static void DrawEffects(Graphics* g, const ViewState& v, bool theUnder)
+		// A playing card, a music note or a bomb in flight.
+		static void Missile(Graphics* g, uint8_t theLook, Vec p, Vec theDir, uint32_t theNow, float theScale)
+		{
+			switch (theLook)
+			{
+			case LOOK_CARD:
+			{
+				Vec d = Norm(theDir), n(-d.y, d.x);
+				float w = 9 * theScale, hh = 13 * theScale;
+				Point q[4] = { Point((int)SX(p.x - d.x * hh - n.x * w), (int)SY(p.y - d.y * hh - n.y * w)), Point((int)SX(p.x + d.x * hh - n.x * w), (int)SY(p.y + d.y * hh - n.y * w)),
+					Point((int)SX(p.x + d.x * hh + n.x * w), (int)SY(p.y + d.y * hh + n.y * w)), Point((int)SX(p.x - d.x * hh + n.x * w), (int)SY(p.y - d.y * hh + n.y * w)) };
+				g->SetColor(Color(250, 250, 250));
+				g->PolyFill(q, 4, true);
+				Disc(g, SX(p.x), SY(p.y), 4 * gView.mScale * theScale, Color(220, 30, 50), 8);
+				break;
+			}
+			case LOOK_NOTE:
+				Text(g, FONT_JUNGLEFEVER12OUTLINE, (theNow / 150) % 2 ? "#" : "~", (int)SX(p.x) - 4, (int)SY(p.y) + 5, Color(255, 160, 240));
+				break;
+			case LOOK_PEARL:
+				Sprite(g, IMAGE_PEARL, 0, 0, p.x, p.y, 0.45f * theScale, false);
+				break;
+			case LOOK_BOMB:
+				Disc(g, SX(p.x), SY(p.y), 9 * gView.mScale * theScale, Color(40, 40, 50), 12);
+				Disc(g, SX(p.x + 4), SY(p.y - 9), 3 * gView.mScale, Color(255, 200, 60), 6);
+				break;
+			case LOOK_MISSILE:
+				Sprite(g, IMAGE_MISSILE, (theNow / 60) % 16, 0, p.x, p.y, 0.7f * theScale, false);
+				break;
+			case LOOK_SPARKLE:
+				Sprite(g, IMAGE_SPARKLE, (theNow / 50) % 14, 0, p.x, p.y, 1.2f * theScale, false);
+				break;
+			default:
+			{
+				g->SetDrawMode(Graphics::DRAWMODE_ADDITIVE);
+				Sprite(g, IMAGE_ENERGYBALL, (theNow / 60) % 6, 0, p.x, p.y, (theLook == LOOK_ZAP ? 0.7f : 0.42f) * theScale, false, LookColor(theLook), true);
+				g->SetDrawMode(Graphics::DRAWMODE_NORMAL);
+				break;
+			}
+			}
+		}
+
+		static void DrawEffects(Graphics* g, const ViewState& v, int theArena, bool theUnder)
 		{
 			const Side& s = *v.mSide;
 			for (const Effect& fx : s.mEffects)
 			{
 				const Event& e = fx.mEvent;
-				if (e.mArena != v.mArena)
+				if (e.mArena != theArena)
 					continue;
 				float t = (v.mNow - fx.mAt) / 1000.0f;
 				if (t < 0)
@@ -774,22 +1025,34 @@ namespace Coop
 					if (t > aLife)
 						break;
 					int a = (int)(160 * std::min(1.0f, (aLife - t) / 0.4f));
+					float R = e.mValue * gView.mScale;
 					if (e.mParam == LOOK_SLIME)
 					{
-						Disc(g, SX(e.mA.x), SY(e.mA.y), SX(e.mValue), Color(110, 210, 60, a / 2), 14);
+						Disc(g, SX(e.mA.x), SY(e.mA.y), R, Color(110, 210, 60, a / 2), 14);
 						break;
 					}
-					if (e.mParam == LOOK_STINK)
+					if (e.mParam == LOOK_STINK || e.mParam == LOOK_INK)
 					{
-						for (int k = 0; k < 7; k++)
+						Color k = e.mParam == LOOK_INK ? Color(30, 20, 60, a / 2) : Color(130, 190, 60, a / 3);
+						for (int i = 0; i < 7; i++)
 						{
-							float ang = k * 0.9f + v.mNow / 900.0f;
-							Disc(g, SX(e.mA.x + std::cos(ang) * e.mValue * 0.5f), SY(e.mA.y + std::sin(ang) * e.mValue * 0.35f), SX(e.mValue * 0.45f), Color(130, 190, 60, a / 3), 14);
+							float ang = i * 0.9f + v.mNow / 900.0f;
+							Disc(g, SX(e.mA.x + std::cos(ang) * e.mValue * 0.5f), SY(e.mA.y + std::sin(ang) * e.mValue * 0.35f), R * 0.45f, k, 14);
 						}
 						break;
 					}
-					Disc(g, SX(e.mA.x), SY(e.mA.y), SX(e.mValue), Color(c.mRed, c.mGreen, c.mBlue, a / 4));
-					Ring(g, SX(e.mA.x), SY(e.mA.y), SX(e.mValue), Color(c.mRed, c.mGreen, c.mBlue, a), 1);
+					if (e.mParam == LOOK_MISSILE)
+					{
+						// The marked area: a pulsing red crosshair.
+						Ring(g, SX(e.mA.x), SY(e.mA.y), R, Color(255, 70, 50, a), 2);
+						Ring(g, SX(e.mA.x), SY(e.mA.y), R * (0.5f + 0.15f * std::sin(v.mNow / 90.0f)), Color(255, 120, 60, a / 2), 1);
+						g->SetColor(Color(255, 70, 50, a / 2));
+						g->DrawLine((int)(SX(e.mA.x) - R), (int)SY(e.mA.y), (int)(SX(e.mA.x) + R), (int)SY(e.mA.y));
+						g->DrawLine((int)SX(e.mA.x), (int)(SY(e.mA.y) - R), (int)SX(e.mA.x), (int)(SY(e.mA.y) + R));
+						break;
+					}
+					Disc(g, SX(e.mA.x), SY(e.mA.y), R, Color(c.mRed, c.mGreen, c.mBlue, a / 4));
+					Ring(g, SX(e.mA.x), SY(e.mA.y), R, Color(c.mRed, c.mGreen, c.mBlue, a), 1);
 					if (e.mParam == LOOK_STATIC && ((v.mNow / 120) % 2 == 0))
 					{
 						Rng r(v.mNow / 120 + e.mId);
@@ -801,6 +1064,129 @@ namespace Coop
 					}
 					break;
 				}
+				case EV_TURRET:
+				{
+					// Niko's turrets (both sides see them) and Shrapnel's mines (only he does).
+					if (theUnder)
+						break;
+					bool aEnded = false;
+					for (const Effect& o : s.mEffects)
+						if (o.mEvent.mType == EV_TURRET_END && o.mEvent.mId == e.mId && o.mSeq > fx.mSeq && o.mEvent.mPlayer == e.mPlayer)
+							aEnded = true;
+					if (aEnded || t > e.mMs / 1000.0f)
+						break;
+					if (e.mParam == 1)
+					{
+						bool aArmed = t > 1.0f;
+						Disc(g, SX(e.mA.x), SY(e.mA.y), 12 * gView.mScale, Color(60, 60, 70, 220), 12);
+						for (int k = 0; k < 6; k++)
+						{
+							float a = k * 1.047f;
+							Disc(g, SX(e.mA.x + std::cos(a) * 14), SY(e.mA.y + std::sin(a) * 14), 3 * gView.mScale, Color(90, 90, 100), 6);
+						}
+						Disc(g, SX(e.mA.x), SY(e.mA.y - 3), 3 * gView.mScale, aArmed && (v.mNow / 300) % 2 ? Color(255, 60, 40) : Color(120, 40, 40), 6);
+						break;
+					}
+					const Color& tc = TeamColor(e.mPlayer);
+					Disc(g, SX(e.mA.x), SY(e.mA.y + 6), 30 * gView.mScale, Color(tc.mRed, tc.mGreen, tc.mBlue, 50));
+					Ring(g, SX(e.mA.x), SY(e.mA.y), HeroDefOf(HERO_NIKO).mAb[AB_Q].mRadius * gView.mScale, Color(tc.mRed, tc.mGreen, tc.mBlue, 26), 1);
+					Sprite(g, IMAGE_NIKO, (int)((v.mNow / 120) % 10), 2, e.mA.x, e.mA.y - 10, 0.75f, false, Color(255, 230, 200), true);
+					float aLeft = 1 - t / std::max(0.1f, e.mMs / 1000.0f);
+					Bar(g, (int)SX(e.mA.x - 20), (int)SY(e.mA.y - 40), (int)(40 * gView.mScale), 1, aLeft, tc);
+					break;
+				}
+				case EV_DECOY:
+				{
+					if (theUnder || t > e.mMs / 1000.0f)
+						break;
+					// Presto's decoy: to the rival it's Presto; to Presto a see-through copy.
+					bool aMine = e.mPlayer == s.mTeam;
+					HeroSnap aFake;
+					aFake.mHero = (uint8_t)e.mId;
+					aFake.mTeam = (uint8_t)e.mPlayer;
+					aFake.mPlayer = (uint8_t)(e.mPlayer % kMaxPlayers);
+					aFake.mFlags = HF_ALIVE | (e.mValue > 0.5f ? HF_RIGHT : 0) | (aMine ? HF_UNTARGETABLE : 0);
+					aFake.mPos = e.mA + Vec(0, std::sin(v.mNow / 400.0f) * 4);
+					aFake.mHp = aFake.mMaxHp = 1;
+					aFake.mLevel = 1;
+					const HeroSnap* o = aMine ? nullptr : s.OtherHero();
+					if (o != nullptr)
+					{
+						aFake.mLevel = o->mLevel;
+						aFake.mHp = o->mHp;
+						aFake.mMaxHp = o->mMaxHp;
+					}
+					DrawHero(g, aFake, v.mNow, false, v.mNames[aFake.mPlayer], true);
+					if (t > e.mMs / 1000.0f - 0.5f)
+						Ring(g, SX(e.mA.x), SY(e.mA.y), (40 + 200 * (t - e.mMs / 1000.0f + 0.5f)) * gView.mScale, Color(200, 160, 255, 160), 2);
+					break;
+				}
+				case EV_CONE:
+				{
+					if (!theUnder || t > e.mMs / 1000.0f)
+						break;
+					int a = (int)(150 * (1 - t / (e.mMs / 1000.0f)));
+					Vec d = e.mB - e.mA;
+					float l = Len(d), base = std::atan2(d.y, d.x), half = e.mValue * 3.14159f / 180;
+					std::vector<Point> p;
+					p.push_back(Point((int)SX(e.mA.x), (int)SY(e.mA.y)));
+					for (int k = 0; k <= 8; k++)
+					{
+						float an = base - half + 2 * half * k / 8;
+						p.push_back(Point((int)SX(e.mA.x + std::cos(an) * l * std::min(1.0f, t * 3)), (int)SY(e.mA.y + std::sin(an) * l * std::min(1.0f, t * 3))));
+					}
+					g->SetColor(Color(c.mRed, c.mGreen, c.mBlue, a / 2));
+					g->PolyFill(p.data(), (int)p.size(), true);
+					g->SetColor(Color(220, 230, 255, a));
+					for (size_t k = 1; k < p.size(); k++)
+						g->DrawLine(p[k - 1].mX, p[k - 1].mY, p[k].mX, p[k].mY);
+					for (int k = 0; k < 4; k++)
+					{
+						float an = base + (k - 1.5f) * half * 0.5f;
+						Vec q = e.mA + Vec(std::cos(an), std::sin(an)) * l * std::fmod(t * 2 + k * 0.25f, 1.0f);
+						Text(g, FONT_TINYBOLD, "z", (int)SX(q.x), (int)SY(q.y), Color(220, 230, 255, a * 2));
+					}
+					break;
+				}
+				case EV_LINE:
+				{
+					if (theUnder || t > e.mMs / 1000.0f + 0.3f)
+						break;
+					float f = std::min(1.0f, t / std::max(0.05f, e.mMs / 1000.0f));
+					Vec p = Lerp(e.mA, e.mB, f);
+					int a = (int)(200 * (1 - std::max(0.0f, t - e.mMs / 1000.0f) / 0.3f));
+					for (int k = 0; k < 3; k++)
+					{
+						Vec q = Lerp(e.mA, p, 1 - k * 0.15f);
+						Ring(g, SX(q.x), SY(q.y), (e.mValue - k * 8) * gView.mScale, Color(255, 170, 240, a / (k + 1)), 2);
+					}
+					break;
+				}
+				case EV_LOB:
+				{
+					if (theUnder)
+						break;
+					float aLife = std::max(0.05f, e.mMs / 1000.0f);
+					// Missiles show only as they come down; the rest arc from the thrower.
+					if (e.mParam == LOOK_MISSILE)
+					{
+						float aFall = 0.55f;
+						if (t > aLife || t < aLife - aFall)
+							break;
+						float f = (t - (aLife - aFall)) / aFall;
+						Vec p = Lerp(e.mA, e.mB, f);
+						Missile(g, LOOK_MISSILE, p, e.mB - e.mA, v.mNow, 1);
+						Ring(g, SX(e.mB.x), SY(e.mB.y), e.mValue * gView.mScale, Color(255, 80, 60, 140), 1);
+						break;
+					}
+					if (t > aLife)
+						break;
+					float f = t / aLife;
+					Vec p = Lerp(e.mA, e.mB, f) - Vec(0, std::sin(f * 3.14159f) * std::min(220.0f, Dist(e.mA, e.mB) * 0.5f + 60));
+					Missile(g, e.mParam, p, e.mB - e.mA, v.mNow, 1.3f);
+					Ring(g, SX(e.mB.x), SY(e.mB.y), e.mValue * gView.mScale, Color(c.mRed, c.mGreen, c.mBlue, (int)(60 + 100 * f)), 1);
+					break;
+				}
 				case EV_TEXT:
 				{
 					if (theUnder || t > 1.3f)
@@ -808,7 +1194,11 @@ namespace Coop
 					static const Color kText[] = { Color(255, 90, 80), Color(120, 255, 130), Color(255, 225, 80), Color(190, 150, 255), Color(230, 240, 255), Color(255, 120, 100) };
 					Color tc = kText[std::min<int>(e.mParam, 5)];
 					tc.mAlpha = (int)(255 * Clamp(1.3f - t, 0, 1));
-					Centered(g, e.mParam == TC_DAMAGE ? FONT_TINYBOLD : FONT_TINY, e.mText, (int)SX(e.mA.x), (int)SY(e.mA.y - t * 50), tc);
+					// Damage numbers pop (bigger first), then float up.
+					Font* f = e.mParam == TC_DAMAGE ? (t < 0.15f ? FONT_CONTINUUMBOLD12OUTLINE : FONT_TINYBOLD) : FONT_TINY;
+					if (f == nullptr)
+						f = FONT_TINYBOLD;
+					Centered(g, f, e.mText, (int)SX(e.mA.x), (int)SY(e.mA.y - t * 50), tc);
 					break;
 				}
 				case EV_PROJECTILE:
@@ -823,10 +1213,7 @@ namespace Coop
 					if (aEnded || t > aLife)
 						break;
 					Vec p = e.mA + e.mB * t;
-					float aScale = e.mParam == LOOK_ZAP ? 0.7f : 0.42f;
-					g->SetDrawMode(Graphics::DRAWMODE_ADDITIVE);
-					Sprite(g, IMAGE_ENERGYBALL, (v.mNow / 60) % 6, 0, p.x, p.y, aScale, false, c, true);
-					g->SetDrawMode(Graphics::DRAWMODE_NORMAL);
+					Missile(g, e.mParam, p, e.mB, v.mNow, 1);
 					break;
 				}
 				case EV_BOLT:
@@ -838,7 +1225,7 @@ namespace Coop
 						break;
 					Vec p = Lerp(e.mA, e.mB, t / aLife);
 					g->SetDrawMode(Graphics::DRAWMODE_ADDITIVE);
-					Sprite(g, IMAGE_ENERGYBALL, (v.mNow / 60) % 6, 0, p.x, p.y, 0.45f, false, kTeamColor[e.mArena % 2], true);
+					Sprite(g, IMAGE_ENERGYBALL, (v.mNow / 60) % 6, 0, p.x, p.y, 0.45f, false, TeamColor(e.mArena % 2), true);
 					g->SetDrawMode(Graphics::DRAWMODE_NORMAL);
 					Sprite(g, IMAGE_PEARL, 0, 0, p.x, p.y, 0.35f, false);
 					break;
@@ -865,18 +1252,41 @@ namespace Coop
 				}
 				case EV_BURST:
 				{
-					if (theUnder || t > 0.5f)
+					float aLife = (e.mParam == LOOK_EVOLVE || e.mParam == LOOK_BOSS) ? 1.0f : 0.5f;
+					if (theUnder || t > aLife)
 						break;
-					if (e.mParam == LOOK_NONE && IMAGE_EXPLOSION != nullptr)
+					if ((e.mParam == LOOK_NONE || e.mParam == LOOK_BOMB || e.mParam == LOOK_MISSILE || e.mParam == LOOK_MINE) && IMAGE_EXPLOSION != nullptr)
 					{
 						int aCel = std::min(9, (int)(t / 0.05f));
 						Sprite(g, IMAGE_EXPLOSION, aCel, 0, e.mA.x, e.mA.y, std::max(0.5f, e.mValue / 40.0f), false);
+						if (e.mParam != LOOK_NONE)
+							Ring(g, SX(e.mA.x), SY(e.mA.y), e.mValue * (0.5f + t * 1.5f) * gView.mScale, Color(255, 150, 60, (int)(200 * (1 - t / aLife))), 2);
 						break;
 					}
-					float r = e.mValue * (0.3f + t / 0.5f * 0.9f);
-					int a = (int)(220 * (1 - t / 0.5f));
-					Ring(g, SX(e.mA.x), SY(e.mA.y), SX(r), Color(c.mRed, c.mGreen, c.mBlue, a), 2);
-					Disc(g, SX(e.mA.x), SY(e.mA.y), SX(r * 0.9f), Color(c.mRed, c.mGreen, c.mBlue, a / 5));
+					if (e.mParam == LOOK_EVOLVE)
+					{
+						// Evolution: rays and rising rings.
+						int a = (int)(230 * (1 - t / aLife));
+						for (int k = 0; k < 12; k++)
+						{
+							float an = k * 0.5236f + t * 2;
+							g->SetColor(Color(255, 240, 160, a));
+							g->DrawLine((int)SX(e.mA.x), (int)SY(e.mA.y), (int)SX(e.mA.x + std::cos(an) * e.mValue * (0.4f + t)), (int)SY(e.mA.y + std::sin(an) * e.mValue * (0.4f + t)));
+						}
+						for (int k = 0; k < 3; k++)
+							Ring(g, SX(e.mA.x), SY(e.mA.y - t * 40), (e.mValue * (0.3f + t * 0.8f) - k * 12) * gView.mScale, Color(255, 230, 120, a), 2);
+						break;
+					}
+					float r = e.mValue * (0.3f + t / aLife * 0.9f);
+					int a = (int)(220 * (1 - t / aLife));
+					Ring(g, SX(e.mA.x), SY(e.mA.y), r * gView.mScale, Color(c.mRed, c.mGreen, c.mBlue, a), 2);
+					Disc(g, SX(e.mA.x), SY(e.mA.y), r * 0.9f * gView.mScale, Color(c.mRed, c.mGreen, c.mBlue, a / 5));
+					if (e.mParam == LOOK_SIREN || e.mParam == LOOK_ANTHEM)
+						for (int k = 0; k < 6; k++)
+						{
+							float an = k * 1.047f + t * 3;
+							Text(g, FONT_TINYBOLD, "~", (int)SX(e.mA.x + std::cos(an) * r * 0.7f), (int)SY(e.mA.y + std::sin(an) * r * 0.7f), Color(255, 170, 240, a));
+						}
 					break;
 				}
 				case EV_BEAM:
@@ -903,7 +1313,7 @@ namespace Coop
 				case EV_LEVEL_UP:
 					if (!theUnder && t < 1.4f)
 					{
-						Ring(g, SX(e.mA.x), SY(e.mA.y), SX(40 + t * 60), Color(255, 230, 120, (int)(200 * (1 - t / 1.4f))), 2);
+						Ring(g, SX(e.mA.x), SY(e.mA.y), (40 + t * 60) * gView.mScale, Color(255, 230, 120, (int)(200 * (1 - t / 1.4f))), 2);
 						Centered(g, FONT_JUNGLEFEVER10OUTLINE, "Level " + std::to_string((int)e.mValue) + "!", (int)SX(e.mA.x), (int)SY(e.mA.y - 70 - t * 30), Color(255, 230, 120, (int)(255 * (1 - t / 1.4f))));
 					}
 					break;
@@ -912,7 +1322,7 @@ namespace Coop
 					{
 						Color rc = e.mType == EV_CROSS ? Color(210, 160, 255) : Color(255, 245, 180);
 						rc.mAlpha = (int)(220 * (1 - t / 0.6f));
-						Ring(g, SX(e.mA.x), SY(e.mA.y), SX(20 + t * 90), rc, 2);
+						Ring(g, SX(e.mA.x), SY(e.mA.y), (20 + t * 90) * gView.mScale, rc, 2);
 					}
 					break;
 				case EV_FISH_DIED:
@@ -920,18 +1330,22 @@ namespace Coop
 						for (int k = 0; k < 4; k++)
 							Disc(g, SX(e.mA.x + (k - 1.5f) * 10), SY(e.mA.y - t * 70 - k * 8), 2.5f, Color(220, 240, 255, (int)(200 * (1 - t / 0.8f))), 8);
 					break;
-				case EV_BUMP:		// a little sand puff where my hero ran into a wall
+				case EV_BUMP:
 					if (!theUnder && t < 0.45f)
 						for (int k = 0; k < 7; k++)
 						{
 							float anAngle = k * 0.8976f + e.mId * 0.7f, r = 8 + t * 60;
-							Disc(g, SX(e.mA.x + std::cos(anAngle) * r), SY(e.mA.y + std::sin(anAngle) * r * 0.7f - t * 16), SX(8.0f - t * 9),
+							Disc(g, SX(e.mA.x + std::cos(anAngle) * r), SY(e.mA.y + std::sin(anAngle) * r * 0.7f - t * 16), (8.0f - t * 9) * gView.mScale,
 								Color(236, 218, 172, (int)(235 * (1 - t / 0.45f))), 10);
 						}
 					break;
 				case EV_WAVE:
 					if (!theUnder && t < 0.8f)
-						Ring(g, SX(e.mA.x), SY(e.mA.y), SX(60 + t * 120), Color(230, 120, 255, (int)(230 * (1 - t / 0.8f))), 3);
+						Ring(g, SX(e.mA.x), SY(e.mA.y), (60 + t * 120) * gView.mScale, Color(230, 120, 255, (int)(230 * (1 - t / 0.8f))), 3);
+					break;
+				case EV_MONSTER:
+					if (!theUnder && t < 1.0f)
+						Ring(g, SX(e.mA.x), SY(e.mA.y), (40 + t * 180) * gView.mScale, e.mValue > 0 ? Color(255, 220, 120, (int)(220 * (1 - t))) : Color(200, 120, 255, (int)(220 * (1 - t))), 3);
 					break;
 				default:
 					break;
@@ -939,747 +1353,414 @@ namespace Coop
 			}
 		}
 
+		// The Trench's monster spots: a marker and a timer while the monster is away.
+		static void DrawMonsterSpots(Graphics* g, const ViewState& v, const ArenaSnap& a)
+		{
+			static const char* kName[MON_COUNT] = { "Gus camp", "Balrog camp", "Psychosquid", "The Boss" };
+			uint32_t aSquidIn = v.mSide->MonsterIn(MON_SQUID), aBossIn = v.mSide->MonsterIn(MON_BOSS);
+			for (int sl = 0; sl < MON_COUNT; sl++)
+			{
+				Vec p = MonsterHome(sl);
+				uint32_t aIn = v.mSide->MonsterIn(sl);
+				// The Squid and the Boss share the pit: show whichever is there or comes first.
+				if (sl == MON_SQUID && (aBossIn == 0 || (aSquidIn != 0 && aBossIn < aSquidIn)))
+					continue;
+				if (sl == MON_BOSS && aSquidIn == 0 && aBossIn != 0)
+					continue;
+				if (sl == MON_BOSS && aBossIn != 0 && aSquidIn != 0 && aSquidIn <= aBossIn)
+					continue;
+				if (aIn == 0)
+				{
+					// There: a soft camp circle under it.
+					Ring(g, SX(p.x), SY(p.y), (sl >= MON_SQUID ? 120.0f : 80.0f) * gView.mScale, Color(200, 140, 255, 40), 1);
+					continue;
+				}
+				Ring(g, SX(p.x), SY(p.y), 46 * gView.mScale, Color(200, 140, 255, 80), 1);
+				Centered(g, FONT_TINY, kName[sl], (int)SX(p.x), (int)SY(p.y) - 4, Color(210, 180, 255, 170));
+				Centered(g, FONT_TINYBOLD, Clock(aIn + 999), (int)SX(p.x), (int)SY(p.y) + 8, Color(255, 230, 160, 200));
+			}
+			(void)a;
+		}
+
 		///////////////////////////////////////////////////////////////////////
-		// The tank
+		// A whole arena at gView
 		///////////////////////////////////////////////////////////////////////
+		void DrawWorld(Graphics* g, const ViewState& v, int theArena, bool theFull)
+		{
+			const Side& s = *v.mSide;
+			ArenaSnap a = s.ViewArena(theArena);
+			DrawBackdrop(g, theArena, v.mNow, theFull);
+			DrawKelp(g, theArena, v.mNow, false);
+			DrawFloor(g, theArena);
+			DrawPortals(g, theArena, s.mTeam, v.mNow, theFull);
+			if (theFull)
+				DrawEffects(g, v, theArena, true);
+			if (IsTank(theArena))
+			{
+				bool aFiring[2] = { false, false };
+				for (const Effect& fx : s.mEffects)
+					if (fx.mEvent.mType == EV_BOLT && fx.mEvent.mArena == theArena && !Elapsed(v.mNow, fx.mAt + 300))
+						for (int i = 0; i < 2; i++)
+							if (Dist(fx.mEvent.mA, TankMap().mTower[i]) < 80)
+								aFiring[i] = true;
+				for (int i = 0; i < 2; i++)
+					DrawTower(g, theArena, i, a, v.mNow, aFiring[i]);
+				DrawCore(g, theArena, a, v.mNow);
+			}
+			else if (theFull)
+				DrawMonsterSpots(g, v, a);
+			for (const FoodSnap& f : a.mFood)
+				Sprite(g, IMAGE_FOOD, (v.mNow / 100 + f.mId) % 10, std::min<int>(a.mFoodQuality, 2), f.mPos.x, f.mPos.y, theFull ? 0.9f : 1.6f, false);
+			if (a.mCollectorLevel > 0)
+				Sprite(g, IMAGE_STINKY, (v.mNow / (a.mCollectorLevel >= 2 ? 45 : 80)) % 10, 0, a.mCollectorPos.x, a.mCollectorPos.y, 0.8f, a.mCollectorRight);
+			for (const FishSnap& f : a.mFish)
+				DrawFish(g, f, v.mNow, !theFull);
+			for (const MinionSnap& m : a.mMinions)
+				DrawMinion(g, m, v.mNow, theFull);
+			DrawWalls(g, theArena);
+			for (const CoinSnap& c : a.mCoins)
+			{
+				int aRow = c.mKind == COIN_SILVER ? 0 : (c.mKind == COIN_GOLD ? 1 : 3);
+				float aScale = theFull ? 0.85f : 2.1f;	// the home window: big enough to click
+				if (theArena == kTrench && theFull)
+				{
+					// Lane coins glint so you notice them.
+					float p = 0.5f + 0.5f * std::sin(v.mNow / 140.0f + c.mId);
+					Disc(g, SX(c.mPos.x), SY(c.mPos.y), (14 + 4 * p) * gView.mScale, Color(255, 230, 120, 40));
+				}
+				Sprite(g, IMAGE_MONEY, (v.mNow / 80 + c.mId) % 10, aRow, c.mPos.x, c.mPos.y, aScale, false);
+			}
+			std::vector<HeroSnap> aHeroes;
+			s.ViewHeroes(theArena, aHeroes);
+			for (const HeroSnap& h : aHeroes)
+			{
+				// Flash a hero white for a moment when its health drops.
+				int k = h.mPlayer % kMaxPlayers;
+				if (theFull)
+				{
+					if (sLastHp[k] >= 0 && h.mHp < sLastHp[k] - 0.5f)
+						sFlashUntil[k] = v.mNow + 110;
+					sLastHp[k] = h.mHp;
+				}
+				DrawHero(g, h, v.mNow, h.mPlayer == s.mPlayer, v.mNames[k], theFull);
+			}
+			DrawKelp(g, theArena, v.mNow, true);
+			if (theFull)
+				DrawEffects(g, v, theArena, false);
+		}
+
+		///////////////////////////////////////////////////////////////////////
+		// The main view
+		///////////////////////////////////////////////////////////////////////
+		// Shake: big hits on my hero and big blasts nearby.
+		static float sShake = 0;
+		static uint32_t sShakeAt = 0, sLastSeq = 0;
+		static float sLastMyHp = -1;
+
+		static Vec ShakeOffset(const ViewState& v)
+		{
+			const Side& s = *v.mSide;
+			const HeroState& h = s.mHero;
+			float aMax = std::max(1.0f, s.MaxHp());
+			if (sLastMyHp >= 0 && h.mAlive && h.mHp < sLastMyHp - aMax * 0.06f)
+			{
+				sShake = std::max(sShake, std::min(7.0f, (sLastMyHp - h.mHp) / aMax * 40));
+				sShakeAt = v.mNow;
+			}
+			sLastMyHp = h.mHp;
+			for (const Effect& fx : s.mEffects)
+			{
+				if (fx.mSeq <= sLastSeq)
+					continue;
+				const Event& e = fx.mEvent;
+				if (e.mArena != v.mArena)
+					continue;
+				bool aBig = (e.mType == EV_BURST && (e.mParam == LOOK_SLAM || e.mParam == LOOK_BOSS || e.mParam == LOOK_MISSILE || e.mParam == LOOK_EVOLVE || (e.mParam == LOOK_NONE && e.mValue >= 80)))
+					|| e.mType == EV_TOWER_DOWN;
+				if (aBig && Dist(e.mA, h.mPos) < 700)
+				{
+					sShake = std::max(sShake, e.mType == EV_TOWER_DOWN ? 6.0f : 3.5f);
+					sShakeAt = v.mNow;
+				}
+			}
+			if (!s.mEffects.empty())
+				sLastSeq = s.mEffects.back().mSeq;
+			float t = (v.mNow - sShakeAt) / 280.0f;
+			if (t >= 1 || sShake <= 0)
+				return Vec();
+			float k = sShake * (1 - t);
+			return Vec(std::sin(v.mNow * 0.09f) * k, std::cos(v.mNow * 0.11f) * k);
+		}
+
 		void DrawTank(Graphics* g, const ViewState& v)
 		{
 			const Side& s = *v.mSide;
 			g->SetLinearBlend(true);
-			ArenaSnap a = s.ViewArena(v.mArena);
-			DrawBackdrop(g, v.mArena, v.mNow);
-			DrawKelp(g, v.mNow, false);
-			DrawFloor(g, v.mArena);
-			DrawPortal(g, v.mNow);
-			DrawEffects(g, v, true);
-			// A tower fires when it just sent a bolt.
-			bool aFiring[2] = { false, false };
-			for (const Effect& fx : s.mEffects)
-				if (fx.mEvent.mType == EV_BOLT && fx.mEvent.mArena == v.mArena && !Elapsed(v.mNow, fx.mAt + 300))
-					for (int i = 0; i < 2; i++)
-						if (Dist(fx.mEvent.mA, TheMap().mTower[i]) < 80)
-							aFiring[i] = true;
-			for (int i = 0; i < 2; i++)
-				DrawTower(g, v.mArena, i, a, v.mNow, aFiring[i]);
-			DrawCore(g, v.mArena, a, v.mNow);
-			for (const FoodSnap& f : a.mFood)
-				Sprite(g, IMAGE_FOOD, (v.mNow / 100 + f.mId) % 10, std::min<int>(a.mFoodQuality, 2), f.mPos.x, f.mPos.y, 0.9f, false);
-			if (a.mCollectorLevel > 0)		// Stinky the pet, in his own colors (the hero is Speedy)
-				Sprite(g, IMAGE_STINKY, (v.mNow / (a.mCollectorLevel >= 2 ? 45 : 80)) % 10, 0, a.mCollectorPos.x, a.mCollectorPos.y, 0.8f, a.mCollectorRight);
-			for (const FishSnap& f : a.mFish)
-				DrawFish(g, f, v.mNow);
-			for (const MinionSnap& m : a.mMinions)
-				DrawMinion(g, m, v.mNow);
-			// Food, fish and minions pass behind the walls; coins (clicked) and heroes stay on top (D35).
-			DrawWalls(g);
-			for (const CoinSnap& c : a.mCoins)
-			{
-				int aRow = c.mKind == COIN_SILVER ? 0 : (c.mKind == COIN_GOLD ? 1 : 3);
-				Sprite(g, IMAGE_MONEY, (v.mNow / 80 + c.mId) % 10, aRow, c.mPos.x, c.mPos.y, 0.85f, false);
-			}
-			std::vector<HeroSnap> aHeroes;
-			s.ViewHeroes(v.mArena, aHeroes);
-			for (const HeroSnap& h : aHeroes)
-				DrawHero(g, h, v.mNow, h.mPlayer == s.mPlayer, v.mNames[h.mPlayer % kMaxPlayers]);
-			DrawKelp(g, v.mNow, true);
-			DrawEffects(g, v, false);
+			Vec aShake = ShakeOffset(v);
+			gView = WorldView();
+			gView.mX += aShake.x;
+			gView.mY += aShake.y;
+			g->SetClipRect(0, kTop, kScreenW, kHudY - kTop);
+			DrawWorld(g, v, v.mArena, true);
 
-			// Aiming an ability: its reach around the hero.
-			const HeroState& h = s.mHero;
-			if (v.mAimSlot >= 0 && h.mAlive && h.mArena == v.mArena)
-			{
-				const AbilityDef& ab = h.Def().mAb[v.mAimSlot];
-				float aReach = ab.mAim == AIM_SELF ? std::max(ab.mRadius, 60.0f) : ab.mRange;
-				Ring(g, SX(h.mPos.x), SY(h.mPos.y), SX(aReach), Color(255, 255, 255, 110), 1);
-			}
 			// Where the mouse is: hovering an enemy shows who you'd attack.
-			if (v.mMouseX >= 0 && InTank(v.mMouseX, v.mMouseY))
+			const HeroState& h = s.mHero;
+			if (v.mMouseX >= 0 && InTank(v.mMouseX, v.mMouseY) && v.mAimSlot < 0)
 			{
 				Vec w = ToWorld(v.mMouseX, v.mMouseY);
+				ArenaSnap a = s.ViewArena(v.mArena);
 				std::vector<Target> aTargets;
 				s.Targets(v.mArena, aTargets, true);
 				for (const Target& t : aTargets)
 					if (t.mTeam != s.mTeam && Dist(t.mPos, w) < t.mRadius + 14 && (t.mRef.mKind != ENT_CORE || !(a.mTowerHp[0] > 0 || a.mTowerHp[1] > 0)))
 					{
-						Ring(g, SX(t.mPos.x), SY(t.mPos.y), SX(t.mRadius + 8), Color(255, 80, 60, 200), 2);
+						Ring(g, SX(t.mPos.x), SY(t.mPos.y), (t.mRadius + 8) * gView.mScale, t.mMonster ? Color(200, 120, 255, 220) : Color(255, 80, 60, 200), 2);
 						break;
 					}
 			}
-			// Warp sickness and respawn countdowns for my hero.
-			if (!h.mAlive)
+			if (h.mAlive && h.mArena == v.mArena)
 			{
-				g->SetColor(Color(0, 0, 0, 90));
-				g->FillRect(0, kTop, kScreenW, kHudY - kTop);
-				char b[48];
-				snprintf(b, sizeof(b), "Back in %d", (int)std::ceil((h.mRespawnAt - v.mNow) / 1000.0f));
-				Centered(g, FONT_JUNGLEFEVER17OUTLINE, b, kScreenW / 2, 220, Color(255, 255, 255));
+				// My hero's auto-attack target: a small marker.
+				Target t;
+				if (h.mAutoTarget.Valid() && s.FindTarget(h.mAutoTarget, t))
+					Ring(g, SX(t.mPos.x), SY(t.mPos.y + t.mRadius), 8 * gView.mScale + 3, Color(255, 255, 255, 90), 1);
 			}
+			DrawAim(g, v);
+			// Low health: a red edge that pulses.
+			if (h.mAlive && h.mHp < s.MaxHp() * 0.3f)
+			{
+				int a = 60 + (int)(50 * std::sin(v.mNow / 180.0f));
+				for (int k = 0; k < 6; k++)
+				{
+					g->SetColor(Color(200, 20, 20, a / (k + 1)));
+					g->FillRect(0, kTop + k * 3, kScreenW, 3);
+					g->FillRect(0, kHudY - (k + 1) * 3, kScreenW, 3);
+					g->FillRect(k * 3, kTop, 3, kHudY - kTop);
+					g->FillRect(kScreenW - (k + 1) * 3, kTop, 3, kHudY - kTop);
+				}
+			}
+			gView = WorldView();
+			g->ClearClipRect();
+			if (v.mHomeWindow)
+				DrawHomeWindow(g, v);
 			g->SetLinearBlend(false);
 		}
 
 		///////////////////////////////////////////////////////////////////////
-		// Top strip and HUD
+		// Hold-to-aim indicators (D36)
 		///////////////////////////////////////////////////////////////////////
-		static void StructurePips(Graphics* g, int x, int y, const ArenaSnap* s, const Color& c, bool theMirror)
-		{
-			if (s == nullptr)
-				return;
-			for (int i = 0; i < 2; i++)
-			{
-				int bx = theMirror ? x - 34 * (i + 1) : x + 34 * i;
-				Bar(g, bx, y, 30, 3, s->mTowerHp[i] / std::max(1.0f, s->mTowerMax), s->mTowerHp[i] > 0 ? c : Color(90, 90, 90));
-			}
-			int cx = theMirror ? x - 68 - 58 : x + 68;
-			Bar(g, cx, y, 54, 3, s->mCoreHp / kCoreHealth, Color(255, 200, 80));
-		}
-
-		void DrawTopStrip(Graphics* g, const ViewState& v)
+		void DrawAim(Graphics* g, const ViewState& v)
 		{
 			const Side& s = *v.mSide;
-			g->SetColor(Color(8, 14, 30, 235));
-			g->FillRect(0, 0, kScreenW, kTop);
-			ArenaSnap aMine = s.mArena.Snapshot();
-			const ArenaSnap* aTheirs = s.mOther.LatestArena();
-			Text(g, FONT_TINY, "YOU", 4, 9, kTeamColor[s.mTeam % 2]);
-			StructurePips(g, 26, 4, &aMine, kTeamColor[s.mTeam % 2], false);
-			Text(g, FONT_TINY, "THEM", kScreenW - 30, 9, kTeamColor[(s.mTeam + 1) % 2]);
-			StructurePips(g, kScreenW - 34, 4, aTheirs, kTeamColor[(s.mTeam + 1) % 2], true);
-			uint32_t ms = s.MatchMs();
-			bool aSudden = s.mSuddenDeath;
-			std::string aClock = Clock(ms) + (aSudden ? "  SUDDEN DEATH" : "");
-			const HeroSnap* o = s.OtherHero();
-			if (o != nullptr)
-				aClock = std::to_string(s.mHero.mKills) + " - " + std::to_string(o->mKills) + "   " + aClock;
-			Centered(g, FONT_TINYBOLD, aClock, kScreenW / 2, 9, aSudden ? Color(255, 110, 90) : Color(230, 235, 255));
-			if (v.mArena != s.mTeam)
-				Centered(g, FONT_TINY, "RIVAL'S TANK (Tab: home)", kScreenW / 2 + 118, 9, Color(255, 170, 140));
-			else if (s.mHero.mArena != s.mTeam)
-				Centered(g, FONT_TINY, "HOME (Tab)", kScreenW / 2 + 118, 9, Color(150, 255, 170));
-		}
-
-		// Quick-buy slots 1-4 and their shop entries.
-		int QuickShop(int theSlot)
-		{
-			static const int kQuick[kQuickSlots] = { SHOP_GUPPY, SHOP_FOOD_COUNT, SHOP_BREEDER, SHOP_CARNIVORE };
-			return kQuick[std::clamp(theSlot, 0, kQuickSlots - 1)];
-		}
-
-		static Rect AbilityRect(int i) { return Rect(196 + i * 37, kHudY + 5, 34, 34); }
-		static Rect ItemRect(int i) { return Rect(348 + (i % 3) * 19, kHudY + 6 + (i / 3) * 19, 17, 17); }
-		static Rect QuickRect(int i) { return Rect(410 + i * 30, kHudY + 4, 28, 36); }
-		static Rect ShopButtonRect() { return Rect(530, kHudY + 4, 34, 36); }
-		static Rect MapRect() { return Rect(568, kHudY + 2, 70, 40); }
-
-		int HudHit(int x, int y)
-		{
-			if (y < kHudY)
-				return -1;
-			for (int i = 0; i < AB_COUNT; i++)
-				if (AbilityRect(i).Contains(x, y))
-					return i;
-			for (int i = 0; i < kQuickSlots; i++)
-				if (QuickRect(i).Contains(x, y))
-					return 10 + i;
-			if (ShopButtonRect().Contains(x, y))
-				return 20;
-			if (MapRect().Contains(x, y))
-				return 30;
-			return -1;
-		}
-
-		static void ItemIcon(Graphics* g, int theItem, float cx, float cy, float theSize)
-		{
-			float sc = theSize / 72.0f;
-			switch (theItem)
+			const HeroState& h = s.mHero;
+			if (v.mAimSlot < 0 || !h.mAlive || h.mArena != v.mArena || v.mMouseX < 0)
+				return;
+			const AbilityDef& ab = h.Def().mAb[v.mAimSlot];
+			Vec w = ToWorld(v.mMouseX, v.mMouseY);
+			Vec d = Norm(w - h.mPos);
+			if (d.x == 0 && d.y == 0)
+				d = Vec(h.mRight ? 1.0f : -1.0f, 0);
+			bool aReady = s.CanCast(v.mAimSlot);
+			Color c = aReady ? Color(120, 230, 255, 200) : Color(255, 120, 100, 170);
+			Color f(c.mRed, c.mGreen, c.mBlue, 40);
+			float hx = SX(h.mPos.x), hy = SY(h.mPos.y);
+			switch (ab.mAim)
 			{
-			case ITEM_SHARP_FIN: ScreenSprite(g, IMAGE_ITCHY, 0, 0, cx, cy, theSize / 64, false); break;
-			case ITEM_THICK_SHELL: ScreenSprite(g, IMAGE_SHELLS, 0, 0, cx, cy, theSize / 30, false); break;
-			case ITEM_SPEED_KELP: ScreenSprite(g, IMAGE_SHELLS, 0, 2, cx, cy, theSize / 30, false); break;
-			case ITEM_PEARL_CHARM: ScreenSprite(g, IMAGE_PEARL, 0, 0, cx, cy, sc, false); break;
-			case ITEM_TOWER_BUSTER: ScreenSprite(g, IMAGE_EXPLOSION, 5, 0, cx, cy, theSize / 70, false); break;
-			case ITEM_LEECH_TOOTH: ScreenSprite(g, IMAGE_SHELLS, 0, 3, cx, cy, theSize / 30, false, Color(255, 120, 120), true); break;
-			case ITEM_CORAL_ARMOR: ScreenSprite(g, IMAGE_SHELLS, 0, 1, cx, cy, theSize / 30, false, Color(255, 150, 170), true); break;
-			default: ScreenSprite(g, IMAGE_MONEY, 0, 1, cx, cy, sc * 1.1f, false); break;
-			}
-		}
-
-		static void ShopIcon(Graphics* g, int theShop, float cx, float cy, float theSize, uint32_t theNow, int theFoodRow = 1)
-		{
-			int f = (int)((theNow / 90) % 10);
-			switch (theShop)
+			case AIM_SELF:
 			{
-			case SHOP_GUPPY: ScreenSprite(g, IMAGE_SMALLSWIM, f, 1, cx, cy, theSize / 60, false); break;
-			case SHOP_BREEDER: ScreenSprite(g, IMAGE_BREEDER, f, 3, cx, cy, theSize / 60, false); break;
-			case SHOP_CARNIVORE: ScreenSprite(g, IMAGE_SMALLSWIM, f, 4, cx, cy, theSize / 64, false); break;
-			case SHOP_FOOD_QUALITY: ScreenSprite(g, IMAGE_FOOD, f, theFoodRow, cx, cy, theSize / 34, false); break;	// the next level's food
-			case SHOP_FOOD_COUNT: ScreenSprite(g, IMAGE_FOOD, f, 0, cx, cy, theSize / 34, false); break;
-			case SHOP_COLLECTOR: ScreenSprite(g, IMAGE_STINKY, f, 0, cx, cy, theSize / 60, false); break;
-			case SHOP_LASER: ScreenSprite(g, IMAGE_ENERGYBALL, f % 6, 0, cx, cy, theSize / 70, false, Color(255, 120, 90), true); break;
-			case SHOP_REPAIR_LEFT: case SHOP_REPAIR_RIGHT: case SHOP_TOWER_UPGRADE: ScreenSprite(g, IMAGE_NIKO, 0, theShop == SHOP_TOWER_UPGRADE ? 1 : 0, cx, cy, theSize / 64, false); break;
-			case SHOP_WAVE_SIZE: case SHOP_WAVE_TOUGH: ScreenSprite(g, IMAGE_MINISYLV, f, 0, cx, cy, theSize / 64, false, theShop == SHOP_WAVE_TOUGH ? Color(255, 160, 140) : Color(255, 255, 255), theShop == SHOP_WAVE_TOUGH); break;
-			case SHOP_SEND_SYLV: ScreenSprite(g, IMAGE_SYLV, f, 0, cx, cy, theSize / 120, false); break;
-			case SHOP_SEND_GUS: ScreenSprite(g, IMAGE_GUS, f, 0, cx, cy, theSize / 120, false); break;
-			case SHOP_SEND_BALROG: ScreenSprite(g, IMAGE_BALROG, f, 0, cx, cy, theSize / 120, false); break;
-			case SHOP_SEND_DESTRUCTOR: ScreenSprite(g, IMAGE_DESTRUCTOR, f, 0, cx, cy, theSize / 120, false); break;
-			default:
-				if (theShop >= SHOP_ITEM_FIRST && theShop <= SHOP_ITEM_LAST)
-					ItemIcon(g, theShop - SHOP_ITEM_FIRST, cx, cy, theSize);
+				float r = std::max(ab.mRadius, 60.0f);
+				Disc(g, hx, hy, r * gView.mScale, f, 40);
+				Ring(g, hx, hy, r * gView.mScale, c, 2);
 				break;
 			}
-		}
-
-		static void Bolt(Graphics* g, float cx, float cy, float theSize, const Color& c)
-		{
-			Point p[6] = { Point((int)(cx + theSize * 0.15f), (int)(cy - theSize * 0.5f)), Point((int)(cx - theSize * 0.3f), (int)(cy + theSize * 0.05f)),
-				Point((int)(cx - theSize * 0.02f), (int)(cy + theSize * 0.05f)), Point((int)(cx - theSize * 0.15f), (int)(cy + theSize * 0.5f)),
-				Point((int)(cx + theSize * 0.3f), (int)(cy - theSize * 0.08f)), Point((int)(cx + theSize * 0.02f), (int)(cy - theSize * 0.08f)) };
-			g->SetColor(c);
-			g->PolyFill(p, 6, false);
-		}
-
-		// A picture for each ability, from the game's own art.
-		static void AbilityIcon(Graphics* g, int theHero, int theSlot, float cx, float cy, float theSize, uint32_t theNow)
-		{
-			int f = (int)((theNow / 90) % 10);
-			float k = theSize / 32.0f;
-			switch (theHero * AB_COUNT + theSlot)
+			case AIM_DIR:
 			{
-			case HERO_ITCHY * AB_COUNT + AB_Q: ScreenSprite(g, IMAGE_ITCHY, f, 0, cx, cy, 0.42f * k, true); Bolt(g, cx - 8 * k, cy, 10 * k, Color(255, 255, 255, 160)); break;
-			case HERO_ITCHY * AB_COUNT + AB_W: ScreenSprite(g, IMAGE_ITCHY, 0, 0, cx, cy, 0.38f * k, true); ScreenSprite(g, IMAGE_SPARKLE, f % 10, 0, cx + 7 * k, cy - 5 * k, 1.1f * k, false); break;
-			case HERO_ITCHY * AB_COUNT + AB_E: ScreenSprite(g, IMAGE_BUBBLES, f % 5, 0, cx, cy, 1.0f * k, false); ScreenSprite(g, IMAGE_ITCHY, f, 0, cx, cy, 0.3f * k, true, Color(255, 255, 255, 120)); break;
-			case HERO_ITCHY * AB_COUNT + AB_R: Ring(g, cx, cy, 11 * k, Color(220, 240, 255), 2); ScreenSprite(g, IMAGE_ITCHY, 5, 1, cx, cy, 0.34f * k, false); break;
-			case HERO_CLYDE * AB_COUNT + AB_Q: ScreenSprite(g, IMAGE_ENERGYBALL, f % 6, 0, cx, cy, 0.34f * k, false, Color(120, 220, 255), true); break;
-			case HERO_CLYDE * AB_COUNT + AB_W: Disc(g, cx, cy, 11 * k, Color(120, 220, 255, 80)); Ring(g, cx, cy, 11 * k, Color(150, 230, 255), 1); Bolt(g, cx, cy, 14 * k, Color(200, 240, 255)); break;
-			case HERO_CLYDE * AB_COUNT + AB_E: ScreenSprite(g, IMAGE_WARPHOLE, (theNow / 70) % 17, 0, cx, cy, 0.13f * k, false); ScreenSprite(g, IMAGE_CLYDE, f, 0, cx + 4 * k, cy, 0.25f * k, false, Color(255, 255, 255, 170)); break;
-			case HERO_CLYDE * AB_COUNT + AB_R: Bolt(g, cx - 6 * k, cy, 16 * k, Color(255, 240, 120)); Bolt(g, cx + 6 * k, cy + 2 * k, 14 * k, Color(170, 230, 255)); break;
-			case HERO_RHUBARB * AB_COUNT + AB_Q: ScreenSprite(g, IMAGE_RHUBARB, f, 0, cx, cy - 3 * k, 0.36f * k, false); Ring(g, cx, cy + 10 * k, 8 * k, Color(230, 200, 150), 1); break;
-			case HERO_RHUBARB * AB_COUNT + AB_W: ScreenSprite(g, IMAGE_RHUBARB, 5, 1, cx, cy, 0.4f * k, false); break;
-			case HERO_RHUBARB * AB_COUNT + AB_E: ScreenSprite(g, IMAGE_SHELLS, (theNow / 60) % 20, 1, cx, cy, 0.8f * k, false); break;
-			case HERO_RHUBARB * AB_COUNT + AB_R: ScreenSprite(g, IMAGE_EXPLOSION, 4, 0, cx, cy, 0.4f * k, false, Color(255, 220, 160), true); break;
-			case HERO_ANGIE * AB_COUNT + AB_Q: Disc(g, cx, cy, 9 * k, Color(255, 245, 170, 120)); g->SetColor(Color(255, 255, 255)); g->FillRect((int)(cx - 2 * k), (int)(cy - 8 * k), (int)(4 * k), (int)(16 * k)); g->FillRect((int)(cx - 8 * k), (int)(cy - 2 * k), (int)(16 * k), (int)(4 * k)); break;
-			case HERO_ANGIE * AB_COUNT + AB_W: ScreenSprite(g, IMAGE_HALO, f, 0, cx, cy - 4 * k, 1.1f * k, false); Ring(g, cx, cy + 2 * k, 10 * k, Color(255, 245, 170), 1); break;
-			case HERO_ANGIE * AB_COUNT + AB_E: ScreenSprite(g, IMAGE_MINISYLV, f, 0, cx, cy, 0.34f * k, false, Color(255, 150, 220), true); break;
-			case HERO_ANGIE * AB_COUNT + AB_R: ScreenSprite(g, IMAGE_ANGIE, f, 0, cx, cy + 2 * k, 0.32f * k, false); ScreenSprite(g, IMAGE_HALO, f, 0, cx, cy - 10 * k, 0.9f * k, false); break;
-			case HERO_SPEEDY * AB_COUNT + AB_Q: Disc(g, cx, cy + 5 * k, 10 * k, Color(120, 220, 70, 170), 14); ScreenSprite(g, HeroImage(HERO_SPEEDY), f, 0, cx, cy - 3 * k, 0.28f * k, false); break;
-			case HERO_SPEEDY * AB_COUNT + AB_W: ScreenSprite(g, IMAGE_SMOKESMALL, f, 0, cx, cy, 0.55f * k, false, Color(140, 220, 80), true); break;
-			case HERO_SPEEDY * AB_COUNT + AB_E: ScreenSprite(g, HeroImage(HERO_SPEEDY), 9, 2, cx, cy, 0.4f * k, false); break;
-			default: ScreenSprite(g, IMAGE_MONEY, f, 1, cx, cy, 0.42f * k, false); break;
-			}
-		}
-
-		static void MiniMap(Graphics* g, const Rect& r, const Side& s, int theArena, uint32_t theNow, bool theAlert = false)
-		{
-			bool aFlash = theAlert && (theNow / 250) % 2 == 0;
-			g->SetColor(aFlash ? Color(120, 20, 20, 235) : Color(10, 30, 60, 230));
-			g->FillRect(r);
-			g->SetColor(theAlert ? Color(255, 80, 70, 230) : Color(120, 170, 220, 160));
-			g->DrawRect(r.mX, r.mY, r.mWidth - 1, r.mHeight - 1);
-			if (theAlert)
-				g->DrawRect(r.mX + 1, r.mY + 1, r.mWidth - 3, r.mHeight - 3);
-			ArenaSnap a = s.ViewArena(theArena);
-			auto P = [&](Vec w) { return Point(r.mX + (int)(w.x / kWorldW * r.mWidth), r.mY + (int)(w.y / kWorldH * r.mHeight)); };
-			for (const FishSnap& f : a.mFish)
-			{
-				Point p = P(f.mPos);
-				g->SetColor(Color(255, 200, 80));
-				g->FillRect(p.mX, p.mY, 1, 1);
-			}
-			for (const MinionSnap& m : a.mMinions)
-			{
-				Point p = P(m.mPos);
-				g->SetColor(Color(255, 70, 70));
-				g->FillRect(p.mX - 1, p.mY - 1, 2, 2);
-			}
-			for (int i = 0; i < 2; i++)
-			{
-				Point p = P(TheMap().mTower[i]);
-				g->SetColor(a.mTowerHp[i] > 0 ? kTeamColor[theArena % 2] : Color(80, 80, 80));
-				g->FillRect(p.mX - 2, p.mY - 2, 4, 4);
-			}
-			std::vector<HeroSnap> aHeroes;
-			s.ViewHeroes(theArena, aHeroes);
-			for (const HeroSnap& h : aHeroes)
-				if (h.mFlags & HF_ALIVE)
-				{
-					Point p = P(h.mPos);
-					Disc(g, (float)p.mX, (float)p.mY, 2.5f, kTeamColor[h.mTeam % 2], 8);
-				}
-			Text(g, FONT_TINY, theArena == s.mTeam ? "home" : "rival", r.mX + 2, r.mY + r.mHeight - 2, Color(200, 220, 255, 170));
-		}
-
-		void DrawHud(Graphics* g, const ViewState& v)
-		{
-			const Side& s = *v.mSide;
-			const HeroState& h = s.mHero;
-			const HeroDef& d = h.Def();
-			g->SetColor(Color(12, 20, 42, 245));
-			g->FillRect(0, kHudY, kScreenW, kScreenH - kHudY);
-			g->SetColor(Color(90, 130, 190, 200));
-			g->FillRect(0, kHudY, kScreenW, 1);
-
-			// Portrait, level, XP.
-			ScreenSprite(g, HeroPortrait(h.mHero), (v.mNow / 100) % 10, 0, 22, kHudY + 22, 0.66f, false);
-			Disc(g, 38, kHudY + 36, 7, Color(20, 20, 50, 240), 12);
-			Centered(g, FONT_TINYBOLD, std::to_string(h.mLevel), 38, kHudY + 40, Color(255, 235, 150));
-			// Health, XP, money.
-			float aMax = s.MaxHp();
-			Bar(g, 48, kHudY + 6, 142, 9, h.mHp / std::max(1.0f, aMax), Color(90, 220, 100));
-			char b[64];
-			snprintf(b, sizeof(b), "%d / %d", (int)std::max(0.0f, h.mHp), (int)aMax);
-			Centered(g, FONT_CONTINUUMBOLD12 ? FONT_CONTINUUMBOLD12 : FONT_TINY, b, 119, kHudY + 15, Color(255, 255, 255));
-			float aXpFrac = h.mLevel >= kMaxLevel ? 1.0f : h.mXp / XpForLevel(h.mLevel);
-			Bar(g, 48, kHudY + 19, 142, 3, aXpFrac, Color(170, 130, 255));
-			ScreenSprite(g, IMAGE_MONEY, (v.mNow / 90) % 10, 1, 56, kHudY + 32, 0.26f, false);
-			snprintf(b, sizeof(b), "%d", s.mArena.mMoney);
-			Text(g, FONT_CONTINUUMBOLD12OUTLINE ? FONT_CONTINUUMBOLD12OUTLINE : FONT_TINYBOLD, b, 66, kHudY + 38, Color(255, 225, 90));
-			snprintf(b, sizeof(b), "%d/%d", h.mKills, h.mDeaths);
-			Text(g, FONT_TINY, b, 160, kHudY + 36, Color(220, 220, 240));
-			uint32_t aSick = s.WarpSicknessLeft();
-			if (aSick > 0)
-			{
-				snprintf(b, sizeof(b), "warp %ds", (int)std::ceil(aSick / 1000.0f));
-				Text(g, FONT_TINY, b, 110, kHudY + 30, Color(200, 160, 255));
-			}
-			if (d.mWalker && (int32_t)(v.mNow - h.mHopReadyAt) < 0)
-			{
-				snprintf(b, sizeof(b), "hop %ds", (int)std::ceil((h.mHopReadyAt - v.mNow) / 1000.0f));
-				Text(g, FONT_TINY, b, 110, kHudY + 40, Color(160, 220, 255));
-			}
-
-			// Abilities.
-			for (int i = 0; i < AB_COUNT; i++)
-			{
-				Rect r = AbilityRect(i);
-				bool aLocked = h.mRank[i] <= 0;
-				g->SetColor(aLocked ? Color(30, 30, 40) : Color(34, 60, 100));
-				g->FillRect(r);
-				AbilityIcon(g, h.mHero, i, r.mX + 17.0f, r.mY + 17.0f, 32, v.mNow);
-				uint32_t aLeft = s.CooldownLeft(i);
-				if (aLeft > 0 && !aLocked)
-				{
-					int aRank = i == AB_R ? std::max(1, h.mRank[AB_R]) : h.mRank[i];
-					float aTotal = d.mAb[i].mCooldownS * RankCooldown(aRank) * s.CooldownMult() * 1000;
-					int aH = (int)(r.mHeight * std::min(1.0f, aLeft / std::max(1.0f, aTotal)));
-					g->SetColor(Color(0, 0, 0, 170));
-					g->FillRect(r.mX, r.mY + r.mHeight - aH, r.mWidth, aH);
-					Centered(g, FONT_TINYBOLD, std::to_string((int)std::ceil(aLeft / 1000.0f)), r.mX + 17, r.mY + 22, Color(255, 255, 255));
-				}
-				if (aLocked)
-					Centered(g, FONT_TINY, "Lv5", r.mX + 17, r.mY + 22, Color(160, 160, 170));
-				g->SetColor(v.mAimSlot == i ? Color(255, 255, 255) : Color(120, 160, 220));
-				g->DrawRect(r.mX, r.mY, r.mWidth - 1, r.mHeight - 1);
-				Text(g, FONT_TINYBOLD, kAbilityKeys[i], r.mX + 2, r.mY + 9, Color(255, 240, 160));
-				// Rank pips.
-				int aMaxRank = i == AB_R ? 2 : kMaxRank;
-				for (int k = 0; k < aMaxRank; k++)
-				{
-					g->SetColor(k < h.mRank[i] ? Color(255, 220, 90) : Color(60, 60, 80));
-					g->FillRect(r.mX + 3 + k * 7, r.mY + r.mHeight - 4, 5, 2);
-				}
-				if (h.mPoints > 0 && i < AB_R && h.mRank[i] < kMaxRank)
-					Text(g, FONT_TINYBOLD, "+", r.mX + r.mWidth - 8, r.mY + 9, Color(120, 255, 120));
-			}
-			// Items.
-			for (int i = 0; i < kItemSlots; i++)
-			{
-				Rect r = ItemRect(i);
-				g->SetColor(Color(28, 36, 60));
-				g->FillRect(r);
-				g->SetColor(Color(90, 110, 150));
-				g->DrawRect(r.mX, r.mY, r.mWidth - 1, r.mHeight - 1);
-				if (h.mItems[i] != ITEM_NONE)
-					ItemIcon(g, h.mItems[i], r.mX + 8.5f, r.mY + 8.5f, 15);
-			}
-			// Quick-buy and the shop button.
-			for (int i = 0; i < kQuickSlots; i++)
-			{
-				Rect r = QuickRect(i);
-				int aShop = QuickShop(i);
-				bool aCan = s.CanBuy(aShop);
-				g->SetColor(aCan ? Color(40, 70, 50) : Color(40, 36, 44));
-				g->FillRect(r);
-				ShopIcon(g, aShop, r.mX + 14.0f, r.mY + 14.0f, 22, v.mNow, std::min(s.mArena.mFoodQuality + 1, 2));
-				Text(g, FONT_TINY, std::to_string(i + 1), r.mX + 2, r.mY + 8, Color(255, 240, 160));
-				Centered(g, FONT_TINY, "$" + std::to_string(s.Price(aShop)), r.mX + 14, r.mY + 34, aCan ? Color(255, 225, 90) : Color(150, 140, 150));
-			}
-			Rect sb = ShopButtonRect();
-			g->SetColor(v.mShopTab >= 0 ? Color(90, 70, 30) : Color(60, 50, 24));
-			g->FillRect(sb);
-			ScreenSprite(g, IMAGE_MONEY, (v.mNow / 90) % 10, 4, sb.mX + 17.0f, sb.mY + 15.0f, 0.36f, false);
-			Centered(g, FONT_TINYBOLD, "B", sb.mX + 17, sb.mY + 34, Color(255, 240, 160));
-			// Mini-map: the other tank (or home while away).
-			int aMapArena = h.mArena == s.mTeam && v.mArena == s.mTeam ? 1 - s.mTeam : s.mTeam;
-			if (v.mArena != s.mTeam)
-				aMapArena = s.mTeam;
-			bool aAlert = !v.mAlert.empty() && v.mArena != s.mTeam && !Elapsed(v.mNow, v.mAlertAt + kAlertShowMs);
-			MiniMap(g, MapRect(), s, aMapArena, v.mNow, aAlert && aMapArena == s.mTeam);
-			// Home under attack while you're looking at the rival's tank: a red banner.
-			if (aAlert)
-			{
-				Font* f = FONT_JUNGLEFEVER12OUTLINE;
-				int w = f != nullptr ? f->StringWidth(v.mAlert) : 200;
-				int a = (v.mNow / 250) % 2 == 0 ? 235 : 200;
-				g->SetColor(Color(150, 20, 20, a));
-				g->FillRect(kScreenW / 2 - w / 2 - 12, kTop + 34, w + 24, 24);
-				g->SetColor(Color(255, 150, 130, 230));
-				g->DrawRect(kScreenW / 2 - w / 2 - 12, kTop + 34, w + 23, 23);
-				Centered(g, f, v.mAlert, kScreenW / 2, kTop + 52, Color(255, 245, 235));
-			}
-
-			// A note (why something was refused, a tip...).
-			if (!v.mNote.empty() && !Elapsed(v.mNow, v.mNoteAt + 2500))
-			{
-				Font* f = FONT_JUNGLEFEVER10OUTLINE;
-				int w = f != nullptr ? f->StringWidth(v.mNote) : 100;
-				g->SetColor(Color(0, 0, 0, 170));
-				g->FillRect(kScreenW / 2 - w / 2 - 8, kHudY - 22, w + 16, 18);
-				Centered(g, f, v.mNote, kScreenW / 2, kHudY - 8, Color(255, 230, 150));
-			}
-			// Hovering an ability: what it does.
-			for (int i = 0; i < AB_COUNT; i++)
-				if (AbilityRect(i).Contains(v.mMouseX, v.mMouseY))
-				{
-					const AbilityDef& ab = d.mAb[i];
-					std::string aTip = std::string(kAbilityKeys[i]) + " " + ab.mName + ": " + ab.mDesc;
-					Font* f = FONT_TINY;
-					int w = std::min(420, (f != nullptr ? f->StringWidth(aTip) : 200) + 12);
-					g->SetColor(Color(0, 0, 20, 220));
-					g->FillRect(std::min(kScreenW - w - 4, 150), kHudY - 40, w, 34);
-					Wrapped(g, f, aTip, std::min(kScreenW - w - 4, 150) + 6, kHudY - 28, w - 12, Color(235, 240, 255));
-				}
-		}
-
-		///////////////////////////////////////////////////////////////////////
-		// The shop
-		///////////////////////////////////////////////////////////////////////
-		static const Rect kShopRect(70, 40, 500, 330);
-		static const char* kTabNames[TAB_COUNT] = { "Fish", "Upgrades", "Hero", "Towers", "Minions" };
-
-		static std::vector<int> TabEntries(int theTab)
-		{
-			std::vector<int> v;
-			for (int i = 0; i < SHOP_COUNT; i++)
-				if (ShopDefOf(i).mTab == theTab)
-					v.push_back(i);
-			return v;
-		}
-
-		static Rect TabRect(int i) { return Rect(kShopRect.mX + 12 + i * 96, kShopRect.mY + 30, 92, 22); }
-		static Rect EntryRect(int i) { return Rect(kShopRect.mX + 12 + (i % 2) * 240, kShopRect.mY + 60 + (i / 2) * 50, 234, 46); }
-
-		int ShopHit(const ViewState& v, int x, int y)
-		{
-			if (v.mShopTab < 0)
-				return -1;
-			if (!kShopRect.Contains(x, y))
-				return -100;
-			for (int i = 0; i < TAB_COUNT; i++)
-				if (TabRect(i).Contains(x, y))
-					return -2 - i;
-			std::vector<int> e = TabEntries(v.mShopTab);
-			for (size_t i = 0; i < e.size(); i++)
-				if (EntryRect((int)i).Contains(x, y))
-					return e[i];
-			return -1;
-		}
-
-		void DrawShop(Graphics* g, const ViewState& v)
-		{
-			if (v.mShopTab < 0)
-				return;
-			const Side& s = *v.mSide;
-			const Rect& R = kShopRect;
-			g->SetColor(Color(6, 14, 34, 238));
-			g->FillRect(R);
-			g->SetColor(Color(255, 205, 80, 220));
-			g->DrawRect(R.mX, R.mY, R.mWidth - 1, R.mHeight - 1);
-			Text(g, FONT_JUNGLEFEVER12OUTLINE, "SHOP", R.mX + 12, R.mY + 22, Color(255, 215, 90));
-			char b[96];
-			snprintf(b, sizeof(b), "$%d", s.mArena.mMoney);
-			Text(g, FONT_JUNGLEFEVER12OUTLINE, b, R.mX + 90, R.mY + 22, Color(255, 235, 150));
-			Text(g, FONT_TINY, "B or Esc closes. The game keeps going!", R.mX + R.mWidth - 190, R.mY + 18, Color(180, 190, 220));
-			for (int i = 0; i < TAB_COUNT; i++)
-			{
-				Rect r = TabRect(i);
-				bool aOn = i == v.mShopTab;
-				g->SetColor(aOn ? Color(80, 60, 20) : Color(26, 36, 60));
-				g->FillRect(r);
-				Centered(g, FONT_JUNGLEFEVER10OUTLINE, kTabNames[i], r.mX + r.mWidth / 2, r.mY + 16, aOn ? Color(255, 230, 120) : Color(190, 200, 230));
-			}
-			std::vector<int> e = TabEntries(v.mShopTab);
-			int aHover = -1;
-			for (size_t i = 0; i < e.size(); i++)
-			{
-				Rect r = EntryRect((int)i);
-				int aShop = e[i];
-				std::string aWhy;
-				bool aCan = s.CanBuy(aShop, &aWhy);
-				bool aOver = r.Contains(v.mMouseX, v.mMouseY);
-				if (aOver)
-					aHover = aShop;
-				g->SetColor(aOver ? Color(50, 70, 110) : Color(22, 32, 56));
-				g->FillRect(r);
-				ShopIcon(g, aShop, r.mX + 23.0f, r.mY + 23.0f, 36, v.mNow, std::min(s.mArena.mFoodQuality + 1, 2));
-				const ShopDef& sd = ShopDefOf(aShop);
-				Text(g, FONT_JUNGLEFEVER10OUTLINE, sd.mName, r.mX + 48, r.mY + 16, aCan ? Color(255, 255, 255) : Color(170, 170, 185));
-				int aPrice = s.Price(aShop);
-				int aOwned = s.Owned(aShop);
-				std::string aSub = aPrice > 0 ? "$" + std::to_string(aPrice) : "maxed";
-				if (aOwned > 0)
-					aSub += "   (have " + std::to_string(aOwned) + ")";
-				Text(g, FONT_TINY, aSub, r.mX + 48, r.mY + 30, aCan ? Color(255, 225, 90) : Color(190, 140, 130));
-				if (!aCan && !aWhy.empty() && aWhy != "Not enough money.")
-					Text(g, FONT_TINY, aWhy, r.mX + 48, r.mY + 41, Color(180, 150, 150));
-			}
-			// What the hovered entry does.
-			if (aHover >= 0)
-			{
-				g->SetColor(Color(0, 0, 0, 160));
-				g->FillRect(R.mX + 12, R.mY + R.mHeight - 30, R.mWidth - 24, 22);
-				Text(g, FONT_TINY, ShopDefOf(aHover).mDesc, R.mX + 18, R.mY + R.mHeight - 15, Color(230, 240, 255));
-			}
-		}
-
-		void DrawFeed(Graphics* g, const ViewState& v)
-		{
-			// Kills and towers falling, top left under the strip.
-			const Side& s = *v.mSide;
-			int y = kTop + 14;
-			for (const Effect& fx : s.mEffects)
-			{
-				const Event& e = fx.mEvent;
-				float t = (v.mNow - fx.mAt) / 1000.0f;
-				if (t > 4)
-					continue;
-				int a = (int)(255 * Clamp(4 - t, 0, 1));
-				std::string aLine;
-				Color c(255, 255, 255, a);
-				if (e.mType == EV_KILL)
-				{
-					std::string aKiller = e.mPlayer >= 0 ? v.mNames[e.mPlayer % kMaxPlayers] : "A tower";
-					aLine = aKiller + " took down " + v.mNames[e.mId % kMaxPlayers] + "!";
-					c = e.mPlayer == s.mPlayer ? Color(255, 225, 90, a) : Color(255, 130, 110, a);
-				}
-				else if (e.mType == EV_TOWER_DOWN)
-				{
-					aLine = e.mArena == s.mTeam ? "Your tower fell!" : "Their tower fell!";
-					c = e.mArena == s.mTeam ? Color(255, 110, 90, a) : Color(130, 255, 140, a);
-				}
-				else if (e.mType == EV_WAVE && e.mArena == s.mTeam)
-				{
-					aLine = "Minions coming through your portal!";
-					c = Color(230, 160, 255, a);
-				}
-				else if (e.mType == EV_CROSS && e.mPlayer != s.mPlayer && e.mArena == s.mTeam)
-				{
-					aLine = v.mNames[e.mPlayer % kMaxPlayers] + " is raiding your tank!";
-					c = Color(255, 120, 100, a);
-				}
-				if (aLine.empty())
-					continue;
-				Text(g, FONT_JUNGLEFEVER10OUTLINE, aLine, 8, y, c);
-				y += 14;
-			}
-		}
-
-		///////////////////////////////////////////////////////////////////////
-		// Draft
-		///////////////////////////////////////////////////////////////////////
-		static Rect CardRect(int i) { return Rect(14 + i * 124, 64, 116, 300); }
-		static Rect DraftButtonRect(int theButton)
-		{
-			switch (theButton)
-			{
-			case DB_OPPONENT: return Rect(40, 380, 180, 32);
-			case DB_SKILL: return Rect(230, 380, 150, 32);
-			case DB_START: return Rect(420, 376, 180, 40);
-			default: return Rect(40, 430, 110, 28);
-			}
-		}
-
-		int DraftHit(int x, int y, bool thePractice)
-		{
-			for (int i = 0; i < HERO_COUNT; i++)
-				if (CardRect(i).Contains(x, y))
-					return i;
-			static const int kButtons[] = { DB_OPPONENT, DB_SKILL, DB_START, DB_BACK };
-			for (int b : kButtons)
-			{
-				if (!thePractice && (b == DB_OPPONENT || b == DB_SKILL))
-					continue;
-				if (DraftButtonRect(b).Contains(x, y))
-					return b;
-			}
-			return DB_NONE;
-		}
-
-		static void StatBar(Graphics* g, int x, int y, const char* theLabel, float theFrac, const Color& c)
-		{
-			Text(g, FONT_TINY, theLabel, x, y + 5, Color(200, 210, 230));
-			Bar(g, x + 42, y, 60, 4, theFrac, c);
-		}
-
-		static void Button(Graphics* g, const Rect& r, const std::string& theLabel, bool theOn, bool theHover)
-		{
-			g->SetColor(theOn ? (theHover ? Color(110, 150, 60) : Color(80, 120, 40)) : Color(50, 50, 60));
-			g->FillRect(r);
-			g->SetColor(Color(255, 230, 140, 200));
-			g->DrawRect(r.mX, r.mY, r.mWidth - 1, r.mHeight - 1);
-			Centered(g, FONT_JUNGLEFEVER12OUTLINE, theLabel, r.mX + r.mWidth / 2, r.mY + r.mHeight / 2 + 6, theOn ? Color(255, 255, 255) : Color(150, 150, 160));
-		}
-
-		void DrawDraft(Graphics* g, uint32_t theNow, int theHover, int theMine, int theTheirs, bool thePractice, int theBotHero, int theBotSkill, const std::string& theStatus)
-		{
-			g->SetLinearBlend(true);
-			Image* b = IMAGE_AQUARIUM3;
-			if (b != nullptr)
-				g->DrawImage(b, Rect(0, 0, kScreenW, kScreenH), Rect(0, 0, b->mWidth, b->mHeight));
-			g->SetColor(Color(0, 10, 30, 170));
-			g->FillRect(0, 0, kScreenW, kScreenH);
-			Centered(g, FONT_JUNGLEFEVER17OUTLINE, "PET HEROES", kScreenW / 2, 30, Color(255, 215, 80));
-			Centered(g, FONT_JUNGLEFEVER10OUTLINE, thePractice ? "Practice against the bot. Pick your hero:" : "Pick your hero (your rival can't see it until you both lock in):", kScreenW / 2, 52, Color(220, 230, 255));
-			for (int i = 0; i < HERO_COUNT; i++)
-			{
-				const HeroDef& d = HeroDefOf(i);
-				Rect r = CardRect(i);
-				bool aMine = i == theMine, aHover = i == theHover;
-				g->SetColor(aMine ? Color(70, 60, 20, 235) : (aHover ? Color(30, 50, 90, 235) : Color(16, 26, 50, 225)));
-				g->FillRect(r);
-				g->SetColor(aMine ? Color(255, 215, 80) : Color(90, 120, 170));
-				g->DrawRect(r.mX, r.mY, r.mWidth - 1, r.mHeight - 1);
-				if (aMine)
-					g->DrawRect(r.mX + 1, r.mY + 1, r.mWidth - 3, r.mHeight - 3);
-				int aRow = 0;
-				ScreenSprite(g, HeroImage(i), (theNow / 80) % 10, aRow, r.mX + r.mWidth / 2.0f, r.mY + 52.0f, aHover || aMine ? 1.25f : 1.1f, false);
-				Centered(g, FONT_JUNGLEFEVER12OUTLINE, d.mName, r.mX + r.mWidth / 2, r.mY + 106, Color(255, 255, 255));
-				Centered(g, FONT_JUNGLEFEVER10OUTLINE, d.mRole, r.mX + r.mWidth / 2, r.mY + 121, Color(255, 205, 90));
-				int y = r.mY + 132;
-				StatBar(g, r.mX + 6, y, "Health", d.mHealth / 800, Color(110, 230, 110));
-				StatBar(g, r.mX + 6, y + 9, "Attack", d.mDamage / d.mAttackS / 40, Color(250, 110, 90));
-				StatBar(g, r.mX + 6, y + 18, "Range", d.mRange / 260, Color(120, 190, 255));
-				StatBar(g, r.mX + 6, y + 27, "Speed", d.mSpeed / 250, Color(255, 225, 90));
-				Text(g, FONT_TINY, d.mWalker ? "Walks the floor" : "Swims", r.mX + 6, y + 45, Color(200, 190, 255));
-				int ty = y + 57;
-				ty = Wrapped(g, FONT_TINY, std::string(d.mPassiveName) + ": " + d.mPassive, r.mX + 6, ty, r.mWidth - 12, Color(200, 230, 255));
-				for (int k = 0; k < AB_COUNT && ty < r.mY + r.mHeight - 6; k++)
-				{
-					Text(g, FONT_TINY, std::string(kAbilityKeys[k]) + " " + d.mAb[k].mName, r.mX + 6, ty, k == AB_R ? Color(255, 190, 120) : Color(235, 235, 245));
-					ty += 10;
-				}
-				if (aHover && !aMine)
-				{
-					g->SetColor(Color(0, 0, 0, 200));
-					g->FillRect(r.mX + 4, r.mY + r.mHeight - 44, r.mWidth - 8, 40);
-					Wrapped(g, FONT_TINY, d.mBlurb, r.mX + 8, r.mY + r.mHeight - 34, r.mWidth - 16, Color(255, 240, 200));
-				}
-			}
-			if (thePractice)
-			{
-				std::string aOpp = std::string("Bot: ") + (theBotHero < 0 ? "random" : HeroDefOf(theBotHero).mName);
-				static const char* kSkill[3] = { "Easy", "Normal", "Hard" };
-				Button(g, DraftButtonRect(DB_OPPONENT), aOpp, true, false);
-				Button(g, DraftButtonRect(DB_SKILL), std::string("Bot: ") + kSkill[std::clamp(theBotSkill, 0, 2)], true, false);
-			}
-			Button(g, DraftButtonRect(DB_START), thePractice ? "Start!" : "Lock in!", theMine >= 0, false);
-			Button(g, DraftButtonRect(DB_BACK), "Back", true, false);
-			if (!theStatus.empty())
-				Centered(g, FONT_JUNGLEFEVER10OUTLINE, theStatus, kScreenW / 2, 470, Color(255, 225, 150));
-			(void)theTheirs;
-			g->SetLinearBlend(false);
-		}
-
-		void DrawCountdown(Graphics* g, int theSeconds)
-		{
-			g->SetColor(Color(0, 0, 0, 90));
-			g->FillRect(0, kTop, kScreenW, kHudY - kTop);
-			Centered(g, FONT_JUNGLEFEVER17OUTLINE, theSeconds > 0 ? std::to_string(theSeconds) : "GO!", kScreenW / 2, 220, Color(255, 225, 90));
-			Centered(g, FONT_JUNGLEFEVER10OUTLINE, "WASD move  -  right-click attack  -  Q E R F abilities", kScreenW / 2, 250, Color(230, 240, 255));
-			Centered(g, FONT_JUNGLEFEVER10OUTLINE, "B shop  -  Tab home  -  hold H: help", kScreenW / 2, 266, Color(230, 240, 255));
-		}
-
-		void DrawHelp(Graphics* g, int theHero, bool theWaiting)
-		{
-			Rect R(40, 30, 560, 400);
-			g->SetColor(Color(4, 12, 32, 240));
-			g->FillRect(R);
-			g->SetColor(Color(255, 205, 80, 220));
-			g->DrawRect(R.mX, R.mY, R.mWidth - 1, R.mHeight - 1);
-			Centered(g, FONT_JUNGLEFEVER15OUTLINE, "HOW TO PLAY PET HEROES", kScreenW / 2, R.mY + 26, Color(255, 215, 80));
-			Font* f = FONT_JUNGLEFEVER10OUTLINE;
-			Color k(255, 230, 140), t(235, 240, 255), d(190, 200, 225);
-			int y = R.mY + 52;
-			auto Line = [&](const std::string& theKey, const std::string& theText) {
-				Text(g, f, theKey, R.mX + 18, y, k);
-				int aBottom = Wrapped(g, FONT_TINY, theText, R.mX + 150, y - 8, R.mWidth - 168, t);
-				y = std::max(y + 20, aBottom + 12);
-			};
-			Line("W A S D", "Move. Walkers (on the floor): A and D walk, W or Space hops over minions' bites, S near the portal's beam or a floor pad crosses.");
-			Line("Right-click", "Attack what's under the cursor, or move there (hold to keep moving).");
-			Line("Q E R F", "Your abilities, aimed at the mouse (F unlocks at level 5). Ctrl+Q/E/R: pick the next upgrade.");
-			Line("Left-click", "In your own tank: collect coins, drop food ($5), zap invaders with your laser.");
-			Line("1 2 3 4 / B", "Quick-buy a guppy, more food, a breeder, a carnivore. B opens the full shop: items, towers, minions.");
-			Line("Tab (hold)", "Look at your own tank while your hero is away.");
-			Line("The portal", "Top middle: cross to the rival's tank and back (walkers: S near its beam). The floor pads in the corners go there too.");
-			Line("Win", "Minion waves attack the rival's towers every 30 s. Break both towers, then their treasure chest core.");
-			Line("Tips", "Feed your fish: they pay for everything. You're stronger in your own tank. Kelp hides you. Towers hurt: push with your minions.");
-			const HeroDef& h = HeroDefOf(theHero);
-			y += 6;
-			Text(g, FONT_JUNGLEFEVER12OUTLINE, std::string(h.mName) + " (" + h.mRole + ")", R.mX + 18, y, Color(120, 230, 255));
-			y += 16;
-			Wrapped(g, FONT_TINY, std::string(h.mPassiveName) + ": " + h.mPassive, R.mX + 18, y, R.mWidth - 36, d);
-			y += 12;
-			for (int i = 0; i < AB_COUNT; i++)
-			{
-				Wrapped(g, FONT_TINY, std::string(kAbilityKeys[i]) + " " + h.mAb[i].mName + ": " + h.mAb[i].mDesc, R.mX + 18, y, R.mWidth - 36, i == AB_R ? Color(255, 200, 130) : d);
-				y += 11;
-			}
-			Centered(g, FONT_JUNGLEFEVER10OUTLINE, theWaiting ? "Press any key or click to start!" : "Hold H to see this again.", kScreenW / 2, R.mY + R.mHeight - 10, Color(255, 225, 150));
-		}
-
-		static Rect ResultButtonRect() { return Rect(kScreenW / 2 - 120, 400, 240, 36); }
-		int ResultHit(int x, int y) { return ResultButtonRect().Contains(x, y) ? 1 : 0; }
-
-		void DrawResult(Graphics* g, const ViewState& v, bool theWon, const std::string& theReason, uint32_t theMatchMs,
-			const HeroSnap& theOther, int theOtherFishLost, int theOtherEarned)
-		{
-			const Side& s = *v.mSide;
-			g->SetColor(Color(0, 0, 0, 170));
-			g->FillRect(0, 0, kScreenW, kScreenH);
-			Rect R(90, 70, 460, 380);
-			g->SetColor(Color(10, 20, 44, 245));
-			g->FillRect(R);
-			g->SetColor(theWon ? Color(255, 215, 80) : Color(230, 100, 90));
-			g->DrawRect(R.mX, R.mY, R.mWidth - 1, R.mHeight - 1);
-			Centered(g, FONT_JUNGLEFEVER17OUTLINE, theWon ? "VICTORY!" : "DEFEAT", kScreenW / 2, R.mY + 34, theWon ? Color(255, 215, 80) : Color(240, 110, 100));
-			Centered(g, FONT_JUNGLEFEVER10OUTLINE, theReason, kScreenW / 2, R.mY + 56, Color(220, 230, 255));
-			Centered(g, FONT_TINY, "Match time " + Clock(theMatchMs), kScreenW / 2, R.mY + 72, Color(190, 200, 230));
-			// Two columns: you and them.
-			const HeroState& h = s.mHero;
-			struct Col { std::string mName; int mHero, mLevel, mKills, mDeaths, mTowers, mFishLost, mEarned; };
-			Col aCols[2] = {
-				{ v.mNames[s.mPlayer % kMaxPlayers], h.mHero, h.mLevel, h.mKills, h.mDeaths, h.mTowers, s.mArena.mFishLost, s.mArena.mMoneyEarned },
-				{ v.mNames[s.mOtherPlayer % kMaxPlayers], theOther.mHero, theOther.mLevel, theOther.mKills, theOther.mDeaths, theOther.mTowers, theOtherFishLost, theOtherEarned },
-			};
-			for (int c = 0; c < 2; c++)
-			{
-				int cx = R.mX + 120 + c * 220;
-				const Col& k = aCols[c];
-				ScreenSprite(g, HeroImage(k.mHero), (v.mNow / 80) % 10, 0, (float)cx, R.mY + 118.0f, 1.2f, c == 0);
-				Centered(g, FONT_JUNGLEFEVER12OUTLINE, k.mName, cx, R.mY + 170, kTeamColor[(c == 0 ? s.mTeam : 1 - s.mTeam) % 2]);
-				Centered(g, FONT_JUNGLEFEVER10OUTLINE, std::string(HeroDefOf(k.mHero).mName) + "  level " + std::to_string(k.mLevel), cx, R.mY + 188, Color(230, 230, 240));
-				int y = R.mY + 212;
-				auto Row = [&](const char* theLabel, const std::string& theValue) {
-					Text(g, FONT_JUNGLEFEVER10OUTLINE, theLabel, cx - 90, y, Color(190, 200, 230));
-					Text(g, FONT_JUNGLEFEVER10OUTLINE, theValue, cx + 50, y, Color(255, 255, 255));
-					y += 20;
+				Ring(g, hx, hy, ab.mRange * gView.mScale, Color(c.mRed, c.mGreen, c.mBlue, 60), 1);
+				float aW = std::max(ab.mRadius, 14.0f);
+				auto Path = [&](Vec theDir, float theLen) {
+					Vec n(-theDir.y, theDir.x);
+					Vec e = h.mPos + theDir * theLen;
+					Point q[4] = { Point((int)SX(h.mPos.x + n.x * aW), (int)SY(h.mPos.y + n.y * aW)), Point((int)SX(e.x + n.x * aW), (int)SY(e.y + n.y * aW)),
+						Point((int)SX(e.x - n.x * aW), (int)SY(e.y - n.y * aW)), Point((int)SX(h.mPos.x - n.x * aW), (int)SY(h.mPos.y - n.y * aW)) };
+					g->SetColor(f);
+					g->PolyFill(q, 4, true);
+					g->SetColor(c);
+					g->DrawLine(q[0].mX, q[0].mY, q[1].mX, q[1].mY);
+					g->DrawLine(q[3].mX, q[3].mY, q[2].mX, q[2].mY);
+					float aHead = std::min(aW * 1.4f, 30.0f);
+					Point ah[3] = { Point((int)SX(e.x + theDir.x * aHead), (int)SY(e.y + theDir.y * aHead)), Point((int)SX(e.x + n.x * aHead), (int)SY(e.y + n.y * aHead)), Point((int)SX(e.x - n.x * aHead), (int)SY(e.y - n.y * aHead)) };
+					g->PolyFill(ah, 3, true);
 				};
-				Row("Kills / deaths", std::to_string(k.mKills) + " / " + std::to_string(k.mDeaths));
-				if (k.mTowers >= 0)
-					Row("Towers taken", std::to_string(k.mTowers));
-				Row("Fish lost", std::to_string(k.mFishLost));
-				Row("Money earned", "$" + std::to_string(k.mEarned));
+				if (h.Look() == HERO_PRESTO && v.mAimSlot == AB_Q)
+				{
+					// Card Trick: the fan.
+					int n = s.HasTalent(0, 0) ? 5 : 3;
+					float b = std::atan2(d.y, d.x);
+					for (int i = 0; i < n; i++)
+					{
+						float an = b + (i - (n - 1) * 0.5f) * 0.21f;
+						Path(Vec(std::cos(an), std::sin(an)), ab.mRange);
+					}
+				}
+				else
+				{
+					float aLen = ab.mRange;
+					if (h.Look() == HERO_ITCHY && v.mAimSlot == AB_Q && s.HasTalent(0, 1))
+						aLen *= 1.6f;
+					if (h.Look() == HERO_CLYDE && v.mAimSlot == AB_Q && s.HasTalent(0, 1))
+						aLen *= 1.4f;
+					if (h.Look() == HERO_SHRAPNEL && v.mAimSlot == AB_E && s.HasTalent(2, 1))
+						aLen *= 2;
+					Path(d, aLen);
+				}
+				break;
 			}
-			Button(g, ResultButtonRect(), "Back to the menu (Enter)", true, ResultButtonRect().Contains(v.mMouseX, v.mMouseY));
+			case AIM_POINT:
+			{
+				Ring(g, hx, hy, ab.mRange * gView.mScale, Color(c.mRed, c.mGreen, c.mBlue, 70), 1);
+				Vec aOff = w - h.mPos;
+				if (Len(aOff) > ab.mRange)
+					aOff = Norm(aOff) * ab.mRange;
+				Vec p = h.mPos + aOff;
+				float r = std::max(ab.mRadius, 24.0f);
+				if (h.Look() == HERO_RHUBARB && v.mAimSlot == AB_Q)
+					p = WalkerPos(h.mArena, Clamp(w.x, h.mPos.x - ab.mRange, h.mPos.x + ab.mRange), h.Def().mRadius);
+				if (h.Look() == HERO_NIKO && v.mAimSlot == AB_Q)
+				{
+					p = WalkerPos(h.mArena, p.x, 22);
+					Ring(g, SX(p.x), SY(p.y), ab.mRadius * gView.mScale, Color(c.mRed, c.mGreen, c.mBlue, 90), 1);
+					r = 26;
+				}
+				if (h.Look() == HERO_CLYDE && v.mAimSlot == AB_E)
+					r = 30;
+				Disc(g, SX(p.x), SY(p.y), r * gView.mScale, f, 32);
+				Ring(g, SX(p.x), SY(p.y), r * gView.mScale, c, 2);
+				g->SetColor(Color(c.mRed, c.mGreen, c.mBlue, 90));
+				g->DrawLine((int)hx, (int)hy, (int)SX(p.x), (int)SY(p.y));
+				break;
+			}
+			case AIM_CONE:
+			{
+				float half = ab.mRadius * (s.HasTalent(0, 1) ? 2.0f : 1.0f) * 3.14159f / 180, b = std::atan2(d.y, d.x);
+				std::vector<Point> p;
+				p.push_back(Point((int)hx, (int)hy));
+				for (int k = 0; k <= 10; k++)
+				{
+					float an = b - half + 2 * half * k / 10;
+					p.push_back(Point((int)SX(h.mPos.x + std::cos(an) * ab.mRange), (int)SY(h.mPos.y + std::sin(an) * ab.mRange)));
+				}
+				g->SetColor(f);
+				g->PolyFill(p.data(), (int)p.size(), true);
+				g->SetColor(c);
+				for (size_t k = 1; k < p.size(); k++)
+					g->DrawLine(p[k - 1].mX, p[k - 1].mY, p[k].mX, p[k].mY);
+				g->DrawLine(p.back().mX, p.back().mY, p[0].mX, p[0].mY);
+				break;
+			}
+			case AIM_FRIEND:
+			{
+				Ring(g, hx, hy, ab.mRange * gView.mScale, Color(c.mRed, c.mGreen, c.mBlue, 70), 1);
+				// What it would land on: a tower or the core near the mouse (at home), else Angie.
+				Vec p = h.mPos;
+				if (h.mArena == s.mTeam)
+				{
+					const MapDef& m = TankMap();
+					float aBest = 130;
+					for (int i = 0; i < 2; i++)
+						if (s.mArena.mTower[i].mAlive && Dist(m.mTower[i], w) < aBest && Dist(m.mTower[i], h.mPos) < ab.mRange + kTowerR)
+						{
+							aBest = Dist(m.mTower[i], w);
+							p = m.mTower[i];
+						}
+					if (Dist(m.mCore, w) < aBest && Dist(m.mCore, h.mPos) < ab.mRange + kCoreR)
+						p = m.mCore;
+				}
+				Ring(g, SX(p.x), SY(p.y), 60 * gView.mScale, Color(255, 245, 170, 200), 2);
+				break;
+			}
+			}
+		}
+
+		///////////////////////////////////////////////////////////////////////
+		// The home window and the world map
+		///////////////////////////////////////////////////////////////////////
+		void DrawHomeWindow(Graphics* g, const ViewState& v)
+		{
+			const Side& s = *v.mSide;
+			bool aAlert = !v.mAlert.empty() && !Elapsed(v.mNow, v.mAlertAt + kAlertShowMs);
+			bool aFlash = aAlert && (v.mNow / 250) % 2 == 0;
+			g->SetColor(aFlash ? Color(200, 40, 40, 255) : Color(255, 205, 60, v.mHomeFaded ? 120 : 230));
+			g->FillRect(kHomeX - 2, kHomeY - 2, kHomeW + 4, kHomeH + 4);
+			gView.mScale = (float)kHomeW / kWorldW;
+			gView.mX = (float)kHomeX;
+			gView.mY = (float)kHomeY;
+			g->SetClipRect(kHomeX, kHomeY, kHomeW, kHomeH);
+			DrawWorld(g, v, s.mTeam, false);
+			if (v.mHomeFaded)
+			{
+				g->SetColor(Color(0, 0, 0, 120));
+				g->FillRect(kHomeX, kHomeY, kHomeW, kHomeH);
+			}
+			g->ClearClipRect();
+			gView = WorldView();
+			g->SetColor(Color(0, 0, 0, 150));
+			g->FillRect(kHomeX, kHomeY + kHomeH - 12, 64, 12);
+			Text(g, FONT_TINYBOLD, "HOME  (click)", kHomeX + 3, kHomeY + kHomeH - 3, Color(255, 225, 120));
+			char b[32];
+			snprintf(b, sizeof(b), "$%d", s.mArena.mMoney);
+			g->SetColor(Color(0, 0, 0, 150));
+			g->FillRect(kHomeX + kHomeW - 44, kHomeY + kHomeH - 12, 44, 12);
+			Text(g, FONT_TINYBOLD, b, kHomeX + kHomeW - 41, kHomeY + kHomeH - 3, Color(255, 225, 90));
+			if (aAlert)
+				Centered(g, FONT_TINYBOLD, v.mAlert, kHomeX + kHomeW / 2, kHomeY + 10, Color(255, 230, 220));
+		}
+
+		void DrawWorldMap(Graphics* g, const ViewState& v, int x, int y, int w, int h)
+		{
+			// The three tanks side by side: team 0's, the Trench, team 1's (the gates line up).
+			const Side& s = *v.mSide;
+			bool aAlert = !v.mAlert.empty() && !Elapsed(v.mNow, v.mAlertAt + kAlertShowMs);
+			int pw = (w - 4) / 3;
+			for (int k = 0; k < 3; k++)
+			{
+				int aArena = k == 0 ? 0 : (k == 1 ? kTrench : 1);
+				Rect r(x + k * (pw + 2), y, pw, h);
+				bool aFlash = aAlert && aArena == s.mTeam && (v.mNow / 250) % 2 == 0;
+				bool aHere = aArena == v.mArena;
+				g->SetColor(aFlash ? Color(120, 20, 20, 235) : (aArena == kTrench ? Color(30, 14, 60, 235) : Color(10, 30, 60, 230)));
+				g->FillRect(r);
+				g->SetColor(aHere ? Color(255, 255, 255, 220) : (aArena == kTrench ? Color(170, 120, 230, 160) : TeamColor(aArena)));
+				g->DrawRect(r.mX, r.mY, r.mWidth - 1, r.mHeight - 1);
+				ArenaSnap a = s.ViewArena(aArena);
+				auto P = [&](Vec wv) { return Point(r.mX + (int)(wv.x / kWorldW * r.mWidth), r.mY + (int)(wv.y / kWorldH * r.mHeight)); };
+				for (const MinionSnap& m : a.mMinions)
+				{
+					Point p = P(m.mPos);
+					if (m.mTeam == kNeutralTeam)
+						Disc(g, (float)p.mX, (float)p.mY, m.mKind >= MIN_PSYCHO ? 2.5f : 1.8f, Color(200, 120, 255), 6);
+					else
+					{
+						const Color& tc = TeamColor(m.mTeam);
+						g->SetColor(tc);
+						g->FillRect(p.mX, p.mY, 1, 1);
+					}
+				}
+				if (IsTank(aArena))
+					for (int i = 0; i < 2; i++)
+					{
+						Point p = P(TankMap().mTower[i]);
+						g->SetColor(a.mTowerHp[i] > 0 ? TeamColor(aArena) : Color(80, 80, 80));
+						g->FillRect(p.mX - 1, p.mY - 1, 3, 3);
+					}
+				std::vector<HeroSnap> aHeroes;
+				s.ViewHeroes(aArena, aHeroes);
+				for (const HeroSnap& hh : aHeroes)
+					if (hh.mFlags & HF_ALIVE)
+					{
+						Point p = P(hh.mPos);
+						Disc(g, (float)p.mX, (float)p.mY, hh.mPlayer == s.mPlayer ? 2.8f : 2.2f, TeamColor(hh.mTeam), 8);
+					}
+			}
 		}
 	}
 }

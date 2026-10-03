@@ -194,44 +194,43 @@ Keeper* and a **Tank** (1-4), and presses **Start Round!**. Roles swap every rou
   - You win by wiping out every fish. You lose if you have no aliens left anywhere
     and can't afford a new baby. Esc twice gives up the round.
 
-### Pet Heroes (2.0, competitive MOBA)
+### Pet Heroes (3.0, competitive MOBA)
 
-Each of you keeps your own tank, **twice the usual size**, and plays one pet as a
-**hero**. Win by breaking your friend's **treasure-chest core**. The host presses
+Each of you keeps your own tank (twice the usual size) and plays one pet as a **hero**.
+Between your tanks lies **the Trench**: both sides' minion waves meet there and fight.
+Win by breaking your friend's **treasure-chest core**. The host presses
 **VERSUS! → Pet Heroes → Start Match!**; both pick a hero and press **Lock in!**. Practice
-against the bot any time from the Co-op window (pick its hero and easy/normal/hard).
-Matches run 15-20 minutes. Hold **H** in a match for the controls.
+against the bot from the Co-op window, or press **Tutorial** there for a guided first
+match. Matches run about 10-12 minutes. Hold **H** in a match for the controls.
 
-| Hero | Role | Ultimate (R, level 5) |
+| Hero | Role | Ultimate (F, from level 6) |
 |---|---|---|
 | **Itchy** (swordfish) | Assassin: dashes in and cuts targets down | Swordstorm: spins and cuts everything around |
 | **Clyde** (jellyfish) | Mage: zaps from range, slowing fields, teleports | Thunderstorm: lightning hits every enemy in the tank |
 | **Rhubarb** (hermit crab) | Tank: leaps in, grabs, stuns | Tidal Slam: stuns and knocks back everything nearby |
 | **Angie** (angelfish) | Support: heals and shields you, towers and the core, charms minions | Resurrection: revives dead fish, heals towers and herself |
 | **Speedy** (neon snail) | Farmer: collects coins, slows, gasses towers | Gold Rush: double coins that fly to him (or home while he's away) |
+| **Presto** (shapeshifter) | Trickster: cards, swaps places, leaves a decoy | Copycat: becomes the enemy hero, with their abilities |
+| **Niko** (clam) | Builder: pearl turrets, a pearl cannon, a clam shield | Fortress: a giant clam that fires at everything near |
+| **Meryl** (mermaid) | Singer: sings enemies to sleep, rallies her minions | Siren Song: pulls everyone in and steals their minions |
+| **Shrapnel** (bomb fish) | Artillery: lobbed bombs, hidden mines, blast jumps | Missile Barrage: rains missiles on an area |
 
-- **W A S D** to move. Speedy and Rhubarb walk the floor: **A/D** walk, **W** or **Space** hops
-  (minions' bites miss you in the air), **S** near the portal's beam or a floor pad
-  crosses. **Right-click** an enemy to attack it (or the ground to move there).
-  **Q E R** abilities and **F** the ultimate, aimed at the mouse. **Ctrl+Q/E/R** picks
-  the next upgrade when you level up.
-- **Grey slate blocks are walls**: they stop heroes and shots (and give a little sand puff
-  when you swim into one); food, fish and minions pass behind them.
-- **Left-click** in your own tank: collect coins, drop food ($5), zap invaders with your
-  laser. Coins you miss still pay half as they sink; **Stinky** (a pet in the shop's
-  Upgrades) collects coins from the floor for you. While you're in the rival's tank, a red
-  banner and an alarm tell you when home is under attack. **1-4** quick-buy (guppy, more food, breeder, carnivore); **B** opens the shop
-  (fish, upgrades, hero items, towers, minions). **Tab** (hold) looks at your tank while
-  your hero is away.
-- **The portal** (top middle) takes you to the rival's tank and back; Speedy and Rhubarb
-  walk under it and ride its beam. The floor pads in the corners go there too. After
-  crossing you can't cross back for 8 s.
-- Every 30 s a wave of mini Sylvesters goes through each portal at the other's two
-  **towers** (giant clams that shoot pearls). Break both towers, then the core. Towers take
-  little damage from a hero unless that hero's minions are nearby.
-- Your fish pay for everything (items, fish, upgrades, bigger waves, big aliens to send).
-  You're stronger in your own tank; kelp hides you; from 15:00 sudden death makes the waves
-  grow every minute.
+- **W A S D** to move; your hero **attacks on its own**. Speedy, Rhubarb and Niko walk the
+  floor: **A/D** walk, **W** or **Space** hops, **S** near a portal or pad crosses.
+  **Right-click** an enemy (or a monster) to attack it, or the ground to move there.
+- **Q E R F**: tap to cast at the mouse, or **hold to see where it goes** and let go
+  (right-click cancels). At levels 3, 6 and 9 pick a **talent** with **Z** or **X**; at
+  level 6 your pet **evolves** and F unlocks.
+- **The portal** (top middle) takes you into the Trench; the gate at its far end leads
+  into your friend's tank. The corner floor pads go straight there too.
+- **The Trench:** minions that die there drop coins, and whoever touches them gets them.
+  The Gus and Balrog camps give buffs; the **Psychosquid** (4:00) joins your next wave
+  and the **Boss** (8:00) makes you huge for two minutes.
+- **Left-click** in your own tank, or in the **home window** (top right while you're away):
+  coins, food ($5), your laser. **1-4** quick-buy (guppy, food, breeder, carnivore), **5**
+  buys the item suggested for your hero, **B** opens the shop.
+- Break both of your friend's **towers** (giant clams), then the core; push with your
+  minions. Kill streaks raise your bounty. Sudden death from 12:00.
 
 The full rules and every number: [docs/PET_HEROES.md](docs/PET_HEROES.md).
 

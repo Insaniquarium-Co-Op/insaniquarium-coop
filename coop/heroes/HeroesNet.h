@@ -14,13 +14,14 @@ namespace Heroes
 {
 	enum HeroMsg : uint8_t
 	{
-		HM_HERO = 1,		// HeroSnap, u32 sender time (every step; the time since 2.2.1)
-		HM_ARENA,			// ArenaSnap, u32 sender time (every step while the rival hero is in it, else 3 Hz)
+		HM_HERO = 1,		// HeroSnap, u32 sender time (every step)
+		HM_ARENA,			// ArenaSnap (a tank or the Trench), u32 sender time (every step while the rival hero is in it, else 3 Hz)
 		HM_HITS,			// u8 count, { EntityRef, Hit }
 		HM_REWARDS,			// u8 count, Reward
 		HM_EVENTS,			// u8 count, Event
-		HM_WAVE,			// u8 from team, f32 mult, u8 count, kinds
+		HM_WAVE,			// to the Trench's owner: u8 from team, u8 count, Arrival (spawn at that team's gate)
 		HM_STATUS,			// u8 status (ST_*): my core fell / I give up
+		HM_ARRIVE,			// to a tank's owner: u8 from team, u8 count, Arrival (minions leaving the Trench)
 	};
 	enum HeroStatus : uint8_t { ST_CORE_DEAD = 1, ST_GAVE_UP };
 
@@ -61,12 +62,14 @@ namespace Heroes
 	void	Put(Writer& w, const Event& v);
 	void	Put(Writer& w, const HeroSnap& v);
 	void	Put(Writer& w, const ArenaSnap& v);
+	void	Put(Writer& w, const Arrival& v);
 	bool	Get(Reader& r, EntityRef& v);
 	bool	Get(Reader& r, Hit& v);
 	bool	Get(Reader& r, Reward& v);
 	bool	Get(Reader& r, Event& v);
 	bool	Get(Reader& r, HeroSnap& v);
 	bool	Get(Reader& r, ArenaSnap& v);
+	bool	Get(Reader& r, Arrival& v);
 
 	struct Packet
 	{

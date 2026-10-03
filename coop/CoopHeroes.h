@@ -1,4 +1,5 @@
-// Insaniquarium Co-op - Pet Heroes: a two-tank MOBA (docs/PET_HEROES.md).
+// Insaniquarium Co-op - Pet Heroes: a MOBA across two tanks and the Trench between them
+// (docs/PET_HEROES.md).
 //
 // The simulation lives in coop/heroes/ (plain C++, also built into the headless
 // tests). This layer puts it on screen: the Pet Heroes screen (draft, countdown,
@@ -33,6 +34,11 @@ namespace Coop
 	void	HeroesTestBotHero(int theHero);				// practice: the bot's hero (-1 random)
 	void	HeroesTestSpeed(int theTicksPerFrame);		// fast-forward (practice only)
 	void	HeroesTestGiveUp();
+	void	HeroesTestTutorial();						// practice: start the guided first match
+	void	HeroesTestWarp(int theArena);				// my hero into that arena (kTrench = 2)
+	void	HeroesTestLevel(int theLevel);				// my hero up to that level
+	void	HeroesTestAim(int theSlot);					// hold that ability's aim (-1 stop), aimed at the mouse
+	void	HeroesTestBotSkill(int theSkill);			// practice: 0 easy, 1 normal, 2 hard
 }
 
 #endif

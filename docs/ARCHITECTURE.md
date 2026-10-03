@@ -21,7 +21,7 @@ How the mod works, for someone about to change it. File paths are relative to th
 | Co-op, Coin Rivals | Host only | Host → guest: drawing commands (one deflate stream), audio/music events. Guest → host: mouse/keyboard |
 | Tank Race | Each computer runs its own board | Setup/ready/go, 5 Hz status snapshots, attacks, finish/result (host decides) |
 | Alien Keeper | The fish keeper's computer only (host or guest; swaps each round) | Tank Race's round messages, plus the drawing stream fish keeper → alien keeper (either direction) and small lair messages back |
-| Pet Heroes | Each computer runs its own side (its tank and its hero), in the mode's own simulation (no `Board`) | Draft/go/cancel, then `MSG_HEROES_DATA` wrapping the sides' messages: hero and tank snapshots, hits, rewards, events, waves (see [PET_HEROES.md](PET_HEROES.md)) |
+| Pet Heroes | Each computer runs its own side (its tank and its hero), in the mode's own simulation (no `Board`); the host also runs the Trench between the tanks | Draft/go/cancel, then `MSG_HEROES_DATA` wrapping the sides' messages: hero, tank and Trench snapshots, hits, rewards, events, waves into the Trench and minions arriving from it (see [PET_HEROES.md](PET_HEROES.md)) |
 
 The guest in co-op still runs the full game program, but its screen is covered by
 `RemoteView` (`coop/CoopView.*`), which draws the host's frames and forwards input. In a
@@ -209,7 +209,10 @@ a folder picker, macOS an AppleScript dialog with "Choose Folder...".
   and the network lifecycle (a `Heroes::Side` plus a `SessionLink` that sends the
   side's messages as `MSG_HEROES_DATA`). The host suspends the co-op stream and the guest
   its view while a network match is up (`Session::IsRacing` counts it as a race).
-- `CoopHeroesDraw.cpp` draws the 2x tank at 0.5 scale with `DrawImageTransformF`
+- `CoopHeroesHud.cpp` draws the HUD, shop, banners, talent cards, death recap, tutorial
+  panel, draft, help and result screens.
+- `CoopHeroesDraw.cpp` draws the world (a tank or the Trench) through a movable transform
+  (`gView`: the main view, the home window, the world map) at 0.5 scale with `DrawImageTransformF`
   (float positions, so a big window stays sharp); walls and the floor are textured
   triangles from small patches cut out of the tank paintings (`Cut`: the 640x480 paintings
   are several GPU textures, which textured triangles can't use); a few sprite sheets have no

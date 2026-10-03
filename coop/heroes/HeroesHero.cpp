@@ -1,5 +1,6 @@
-// Pet Heroes - the hero: orders, movement and pathing, portals, kelp, auto-attacks,
-// projectiles, zones and the five heroes' abilities. Part of Side (HeroesSide.h).
+// Pet Heroes - the hero: orders, movement and pathing, crossings between the three
+// tanks, kelp, auto-attacks, projectiles, zones, landing impacts, turrets and mines,
+// burns. Part of Side (HeroesSide.h); the abilities are in HeroesAbilities.cpp.
 
 #include "HeroesSide.h"
 #include "HeroesMap.h"
@@ -7,23 +8,43 @@
 namespace Heroes
 {
 	static bool Elapsed(uint32_t theNow, uint32_t theAt) { return (int32_t)(theNow - theAt) >= 0; }
-	static const float kWalkerReachUp = 320;	// walkers pounce	// walkers hit things this far above them
-	static const float kRevealR = 150;			// enemy heroes this close see you in kelp
 
 	///////////////////////////////////////////////////////////////////////////
 	// Orders
 	///////////////////////////////////////////////////////////////////////////
+	// A crossing near theWhere in that arena (a tank's portal, a Trench gate), or -1.
+	static int GateNear(int theArena, Vec theWhere, float theSlack, Vec& theGate)
+	{
+		const MapDef& m = MapOf(theArena);
+		if (IsTank(theArena))
+		{
+			if (Dist(theWhere, m.mPortal) < m.mPortalR + theSlack)
+			{
+				theGate = m.mPortal;
+				return 0;
+			}
+			return -1;
+		}
+		for (int g = 0; g < 2; g++)
+			if (Dist(theWhere, m.mGate[g]) < m.mGateR + theSlack)
+			{
+				theGate = m.mGate[g];
+				return g;
+			}
+		return -1;
+	}
+
 	void Side::OrderMove(Vec theWhere)
 	{
 		HeroState& h = mHero;
 		if (!h.mAlive)
 			return;
 		h.mOrder = HeroState::ORD_MOVE;
-		const MapDef& m = TheMap();
-		h.mWantCross = Dist(theWhere, m.mPortal) < m.mPortalR + 24;
+		Vec aGate;
+		h.mWantCross = GateNear(h.mArena, theWhere, 24, aGate) >= 0;
 		if (h.mWantCross)
-			theWhere = m.mPortal;
-		h.mMoveTo = h.Def().mWalker ? WalkerPos(theWhere.x, h.Def().mRadius) : NearestOpen(theWhere);
+			theWhere = aGate;
+		h.mMoveTo = h.Def().mWalker ? WalkerPos(h.mArena, theWhere.x, h.Def().mRadius) : NearestOpen(h.mArena, theWhere);
 		h.mTarget = EntityRef();
 		h.mPath.clear();
 		h.mRepathAt = 0;
@@ -39,6 +60,7 @@ namespace Heroes
 			return;
 		h.mOrder = HeroState::ORD_ATTACK;
 		h.mTarget = theTarget;
+		h.mAutoTarget = theTarget;
 		h.mWantCross = false;
 		h.mPath.clear();
 		h.mRepathAt = 0;
@@ -57,13 +79,19 @@ namespace Heroes
 		float l = Len(theDir);
 		mSteer = l > 0.001f ? theDir * (1.0f / l) : Vec();
 		if (l > 0.001f && mHero.mOrder != HeroState::ORD_IDLE)
-			OrderStop();						// the keys take over from a right-click order
+		{
+			// The keys take over from a right-click order; what you were attacking stays
+			// your auto-attack's target (kite a camp with WASD and keep hitting it).
+			if (mHero.mOrder == HeroState::ORD_ATTACK)
+				mHero.mAutoTarget = mHero.mTarget;
+			OrderStop();
+		}
 	}
 
 	bool Side::Hop()
 	{
 		HeroState& h = mHero;
-		if (!h.mAlive || !h.Def().mWalker || Stunned() || Busy() || Hopping())
+		if (!h.mAlive || !h.Def().mWalker || Stunned() || Busy() || Hopping() || Rooted())
 			return false;
 		if (!Elapsed(mNow, h.mHopReadyAt))
 		{
@@ -83,27 +111,35 @@ namespace Heroes
 		mLastRefusal.clear();
 		if (!h.mAlive || !d.mWalker)
 			return false;
-		// The nearest crossing along the floor: the portal's beam or a pad.
-		const MapDef& m = TheMap();
-		Vec aBest = m.mPortal;
-		float aBestD = std::fabs(h.mPos.x - m.mPortal.x);
-		for (int i = 0; i < 2; i++)
-		{
-			float dx = std::fabs(h.mPos.x - m.mPad[i].x) - m.mPadR;
+		// The nearest crossing along the floor: a portal's beam, a pad, a Trench gate.
+		const MapDef& m = MapOf(h.mArena);
+		Vec aBest;
+		float aBestD = 1e9f;
+		auto Try = [&](Vec p, float theSlack) {
+			float dx = std::fabs(h.mPos.x - p.x) - theSlack;
 			if (dx < aBestD)
 			{
 				aBestD = dx;
-				aBest = m.mPad[i];
+				aBest = p;
 			}
+		};
+		if (IsTank(h.mArena))
+		{
+			Try(m.mPortal, 0);
+			for (int i = 0; i < 2; i++)
+				Try(m.mPad[i], m.mPadR);
 		}
+		else
+			for (int g = 0; g < 2; g++)
+				Try(m.mGate[g], m.mGateR);
 		if (aBestD > kCrossAssistR)
 		{
-			mLastRefusal = "S crosses near the portal's beam or a floor pad.";
+			mLastRefusal = IsTank(h.mArena) ? "S crosses near the portal's beam or a floor pad." : "S crosses near a gate at either end.";
 			return false;
 		}
 		if (WarpSicknessLeft() > 0)
 		{
-			mLastRefusal = "Warp sickness: " + std::to_string((WarpSicknessLeft() + 999) / 1000) + " s before you can cross again.";
+			mLastRefusal = "You can't leave yet: " + std::to_string((WarpSicknessLeft() + 999) / 1000) + " s.";
 			return false;
 		}
 		OrderMove(aBest);
@@ -123,46 +159,39 @@ namespace Heroes
 	///////////////////////////////////////////////////////////////////////////
 	// Step
 	///////////////////////////////////////////////////////////////////////////
+	Vec Side::ExitPoint(int theArena, int theGate) const
+	{
+		const HeroDef& d = mHero.Def();
+		const MapDef& m = MapOf(theArena);
+		Vec p = IsTank(theArena) ? m.mPortalExit : m.mGateExit[std::clamp(theGate, 0, 1)];
+		return d.mWalker ? WalkerPos(theArena, p.x, d.mRadius) : p;
+	}
+
 	void Side::StepHero(float theDt)
 	{
 		HeroState& h = mHero;
-		const HeroDef& d = h.Def();
 		if (!h.mAlive)
 		{
 			if (Elapsed(mNow, h.mRespawnAt))
 				Respawn();
 			return;
 		}
+		if (h.mCopyHero >= 0 && Elapsed(mNow, h.mCopyUntil))
+			EndCopy();
+		const HeroDef& d = h.Def();
 		float aMax = MaxHp();
 		// The fountain: heal quickly next to your own core.
-		if (h.mArena == mTeam && Dist(h.mPos, TheMap().mCore) < kFountainRadius)
+		if (h.mArena == mTeam && Dist(h.mPos, TankMap().mCore) < kFountainRadius)
 			h.mHp = std::min(aMax, h.mHp + aMax * kFountainHealPct * theDt);
 		else
-			h.mHp = std::min(aMax, h.mHp + aMax * 0.004f * theDt);	// a slow trickle anywhere
+			h.mHp = std::min(aMax, h.mHp + aMax * (HasBuff(BUFF_GUS) ? kGusRegenPct : 0.004f) * theDt);	// a trickle anywhere
+		h.mHp = std::min(h.mHp, aMax);
 		if (h.mShield > 0 && Elapsed(mNow, h.mShieldUntil))
 			h.mShield = 0;
-		// Unspent ability points spend themselves after a few seconds.
-		if (h.mPoints > 0 && Elapsed(mNow, h.mPointAt + (uint32_t)(kAutoRankS * 1000)))
-		{
-			int aWant[AB_COUNT] = { 1, 1, 1, 0 };
-			for (int i = 0; i < 9; i++)
-			{
-				int s = d.mRankOrder[i];
-				aWant[s]++;
-				if (h.mRank[s] < aWant[s] && h.mRank[s] < kMaxRank)
-				{
-					SpendPoint(s);
-					break;
-				}
-			}
-			if (h.mPoints > 0)
-				for (int s = AB_Q; s <= AB_E && h.mPoints > 0; s++)
-					if (h.mRank[s] < kMaxRank)
-						SpendPoint(s);
-		}
 		if (h.mSharpenLeft > 0 && Elapsed(mNow, h.mSharpenUntil))
 			h.mSharpenLeft = 0;
 
+		Vec aStart = h.mPos;
 		StepAbilities(theDt);
 		if (!h.mAlive)
 			return;
@@ -181,37 +210,48 @@ namespace Heroes
 				float t = Clamp((float)(int32_t)(mNow - h.mHopStart) / kHopMs, 0, 1);
 				aUp = std::sin(t * 3.14159f) * kHopHeight;
 			}
-			h.mPos = WalkerPos(h.mPos.x, d.mRadius) - Vec(0, aUp);
+			h.mPos = WalkerPos(h.mArena, h.mPos.x, d.mRadius) - Vec(0, aUp);
 		}
+		if (Dist(aStart, h.mPos) > 0.5f)
+			h.mLastMoveAt = mNow;
 
-		// Portals: the warp hole (top middle) and the floor pads (bottom corners).
-		const MapDef& m = TheMap();
-		int aGate = -1;
-		if (Dist(h.mPos, m.mPortal) < m.mPortalR)
-			aGate = 0;
-		if (d.mWalker && h.mWantCross && std::fabs(h.mPos.x - m.mPortal.x) < 14)
-			aGate = 0;							// the portal's beam lifts walkers from the floor below
-		for (int i = 0; i < 2; i++)
-			if (Dist(h.mPos, m.mPad[i]) < m.mPadR + d.mRadius)
-				aGate = 1 + i;
-		if (aGate < 0)
-			h.mInPortal = false;
-		else if (!h.mInPortal && !Stunned() && !Busy() && WarpSicknessLeft() == 0)
+		// Crossings. In a tank: the warp hole (top middle) leads into the Trench, at this
+		// tank's end; the floor pads (bottom corners) lead straight to the other tank. In
+		// the Trench: each end's gate leads to that team's tank.
+		const MapDef& m = MapOf(h.mArena);
+		int aTo = -1;
+		Vec aExit;
+		if (IsTank(h.mArena))
 		{
-			int aTo = h.mArena == mTeam ? 1 - mTeam : mTeam;
-			Vec aExit;
-			if (aGate == 0)
-				aExit = d.mWalker ? WalkerPos(m.mPortalExit.x, d.mRadius) : m.mPortalExit;	// the middle: out of both towers' reach
-			else
+			bool aPortal = Dist(h.mPos, m.mPortal) < m.mPortalR
+				|| (d.mWalker && h.mWantCross && std::fabs(h.mPos.x - m.mPortal.x) < 14);	// walkers ride the beam
+			if (aPortal)
 			{
-				float x = m.mPad[aGate - 1].x + (aGate == 1 ? 110.0f : -110.0f);
-				aExit = d.mWalker ? WalkerPos(x, d.mRadius) : ClampToWater(Vec(x, m.mPad[aGate - 1].y - 90), d.mRadius);
+				aTo = kTrench;
+				aExit = ExitPoint(kTrench, h.mArena);
 			}
-			CrossTo(aTo, aExit);
+			for (int i = 0; i < 2; i++)
+				if (Dist(h.mPos, m.mPad[i]) < m.mPadR + d.mRadius)
+				{
+					aTo = 1 - h.mArena;
+					float x = m.mPad[i].x + (i == 0 ? 110.0f : -110.0f);
+					aExit = d.mWalker ? WalkerPos(aTo, x, d.mRadius) : ClampToWater(aTo, Vec(x, m.mPad[i].y - 90), d.mRadius);
+				}
 		}
+		else
+			for (int g = 0; g < 2; g++)
+				if (Dist(h.mPos, m.mGate[g]) < m.mGateR)
+				{
+					aTo = g;
+					aExit = ExitPoint(g, 0);
+				}
+		if (aTo < 0)
+			h.mInPortal = false;
+		else if (!h.mInPortal && !Stunned() && !Busy() && !Rooted() && WarpSicknessLeft() == 0)
+			CrossTo(aTo, aExit);
 
 		// Kelp hides you unless an enemy hero is close or you just attacked.
-		bool aKelp = KelpAt(h.mPos) >= 0;
+		bool aKelp = KelpAt(h.mArena, h.mPos) >= 0;
 		HeroSnap o;
 		bool aSpotted = OtherHeroIn(h.mArena, &o) && (o.mFlags & HF_ALIVE) && Dist(o.mPos, h.mPos) < kRevealR;
 		h.mHidden = aKelp && !aSpotted && Elapsed(mNow, h.mRevealUntil);
@@ -224,12 +264,16 @@ namespace Heroes
 		h.mPos = thePos;
 		h.mInPortal = true;
 		h.mWantCross = false;
-		h.mCrossReadyAt = mNow + (uint32_t)(kWarpSicknessS * 1000);
+		// A raid is a commitment: no leaving the rival's tank for a while (D24/D36).
+		bool aRaid = IsTank(theArena) && theArena != mTeam;
+		h.mCrossReadyAt = mNow + (uint32_t)((aRaid ? kRaidLockS : kCrossGuardS) * 1000);
 		h.mOrder = HeroState::ORD_IDLE;
 		h.mPath.clear();
 		h.mTarget = EntityRef();
+		h.mAutoTarget = EntityRef();
 		h.mStormUntil = 0;
 		h.mSlimeUntil = 0;
+		h.mHealUntil = 0;
 		Event e;
 		e.mType = EV_CROSS;
 		e.mArena = (uint8_t)theArena;
@@ -254,7 +298,8 @@ namespace Heroes
 				h.mOrder = HeroState::ORD_IDLE;
 				return;
 			}
-			if (InReach(h, t, d.mRange))
+			bool aClear = d.mWalker || d.mProjectile <= 0 || LineOfSight(h.mArena, h.mPos, t.mPos);
+			if (InReach(h, t, d.mRange) && aClear)
 				return;							// StepAttack does the rest
 			aGoal = t.mPos;
 		}
@@ -262,6 +307,8 @@ namespace Heroes
 			return;
 
 		float aStep = Speed() * theDt;
+		if (aStep <= 0)
+			return;
 		Vec aOld = h.mPos;
 		if (d.mWalker)
 		{
@@ -275,13 +322,13 @@ namespace Heroes
 			}
 			else
 				x += dx > 0 ? aStep : -aStep;
-			h.mPos = WalkerPos(x, d.mRadius);
+			h.mPos = WalkerPos(h.mArena, x, d.mRadius);
 		}
 		else
 		{
 			if (h.mPath.empty() || Elapsed(mNow, h.mRepathAt))
 			{
-				FindPath(h.mPos, aGoal, h.mPath);
+				FindPath(h.mArena, h.mPos, aGoal, h.mPath);
 				h.mRepathAt = mNow + (h.mOrder == HeroState::ORD_ATTACK ? 350 : 100000);
 			}
 			while (aStep > 0 && !h.mPath.empty())
@@ -301,7 +348,7 @@ namespace Heroes
 			}
 			if (h.mPath.empty() && h.mOrder == HeroState::ORD_MOVE)
 				h.mOrder = HeroState::ORD_IDLE;
-			h.mPos = ClampToWater(h.mPos, d.mRadius);
+			h.mPos = ClampToWater(h.mArena, h.mPos, d.mRadius);
 		}
 		if (std::fabs(h.mPos.x - aOld.x) > 0.05f)
 			h.mRight = h.mPos.x > aOld.x;
@@ -314,21 +361,24 @@ namespace Heroes
 		if (h.mOrder != HeroState::ORD_IDLE || (mSteer.x == 0 && mSteer.y == 0))
 			return;
 		float aStep = Speed() * theDt;
+		if (aStep <= 0)
+			return;
 		Vec aOld = h.mPos;
+		int a = h.mArena;
 		if (d.mWalker)
 		{
 			if (mSteer.x != 0)
-				h.mPos = WalkerPos(Clamp(h.mPos.x + (mSteer.x > 0 ? aStep : -aStep), d.mRadius, kWorldW - d.mRadius), d.mRadius);
+				h.mPos = WalkerPos(a, Clamp(h.mPos.x + (mSteer.x > 0 ? aStep : -aStep), d.mRadius, kWorldW - d.mRadius), d.mRadius);
 		}
 		else
 		{
 			// Swim. Against a wall, slide along it: first the part of the move that fits,
 			// then turned 45 and 90 degrees, keeping to one side until clear (never get stuck
 			// inside one either).
-			bool aFree = !SwimmerFits(h.mPos, d.mRadius);
+			bool aFree = !SwimmerFits(a, h.mPos, d.mRadius);
 			auto TryMove = [&](Vec theMove) {
-				Vec q = ClampToWater(h.mPos + theMove, d.mRadius);
-				if (Dist(q, h.mPos) < 0.01f || (!aFree && !SwimmerFits(q, d.mRadius)))
+				Vec q = ClampToWater(a, h.mPos + theMove, d.mRadius);
+				if (Dist(q, h.mPos) < 0.01f || (!aFree && !SwimmerFits(a, q, d.mRadius)))
 					return false;
 				h.mPos = q;
 				return true;
@@ -336,17 +386,17 @@ namespace Heroes
 			Vec v = mSteer * aStep;
 			bool aStraight = TryMove(v);
 			bool aMoved = aStraight || TryMove(Vec(v.x, 0)) || TryMove(Vec(0, v.y));
-			bool aAtEdge = Dist(ClampToWater(aOld + v, d.mRadius), aOld + v) > 0.01f;	// turning gets around walls, not along the tank's edges
+			bool aAtEdge = Dist(ClampToWater(a, aOld + v, d.mRadius), aOld + v) > 0.01f;	// turning gets around walls, not along the tank's edges
 			if (!aStraight && !aAtEdge && Elapsed(mNow, mLastBumpAt + 400))
 			{
 				// Ran into a wall: a sand puff on my own screen (never sent).
 				mLastBumpAt = mNow;
 				Event e;
 				e.mType = EV_BUMP;
-				e.mArena = (uint8_t)h.mArena;
-				e.mId = ++mEffectSeq;
+				e.mArena = (uint8_t)a;
+				e.mId = mEffectSeq + 1;
 				e.mA = aOld + mSteer * (d.mRadius / std::max(0.01f, Len(mSteer)));
-				mEffects.push_back({ e, mNow, mEffectSeq });
+				Local(e);
 			}
 			for (int aTurn = 0; !aMoved && !aAtEdge && aTurn < 4; aTurn++)
 			{
@@ -364,38 +414,101 @@ namespace Heroes
 			h.mRight = h.mPos.x > aOld.x;
 	}
 
+	///////////////////////////////////////////////////////////////////////////
+	// Attacks
+	///////////////////////////////////////////////////////////////////////////
+	// Auto-attack (D36): with no right-click order, attack the best enemy in reach. Keep
+	// the last target while it's in reach; else whoever just hurt my hero; else the
+	// nearest minion or hero; then structures; enemy fish last. Never start on a monster
+	// (only keep one you were already fighting), a core the towers still protect, or
+	// something asleep (your hit would wake it).
+	Target Side::AutoAcquire() const
+	{
+		const HeroState& h = mHero;
+		const HeroDef& d = h.Def();
+		std::vector<Target> v;
+		Targets(h.mArena, v);
+		bool aOpen = ArenaHasOpenCore(h.mArena);
+		Target aBest;
+		float aBestScore = 1e9f;
+		for (const Target& t : v)
+		{
+			if (t.mTeam == mTeam)
+				continue;
+			bool aSticky = t.mRef == h.mAutoTarget;
+			if ((t.mMonster && !aSticky) || t.mAsleep)
+				continue;
+			if (t.mRef.mKind == ENT_CORE && !aOpen)
+				continue;
+			if (!InReach(h, t, d.mRange))
+				continue;
+			if (!d.mWalker && d.mProjectile > 0 && !LineOfSight(h.mArena, h.mPos, t.mPos))
+				continue;
+			float aScore = Dist(t.mPos, h.mPos);
+			if (aSticky)
+				aScore -= 5000;
+			else if (t.mHero && !Elapsed(mNow, mHurtByAt[t.mRef.mId % kMaxPlayers] + 3000))
+				aScore -= 2000;
+			else if (t.mStructure)
+				aScore += 1000;
+			else if (t.mRef.mKind == ENT_FISH)
+				aScore += 3000;
+			if (aScore < aBestScore)
+			{
+				aBestScore = aScore;
+				aBest = t;
+			}
+		}
+		return aBest;
+	}
+
 	void Side::StepAttack()
 	{
 		HeroState& h = mHero;
 		const HeroDef& d = h.Def();
-		if (h.mOrder != HeroState::ORD_ATTACK)
-			return;
 		Target t;
-		if (!FindTarget(h.mTarget, t) || t.mTeam == mTeam)
+		if (h.mOrder == HeroState::ORD_ATTACK)
 		{
-			h.mOrder = HeroState::ORD_IDLE;
-			return;
+			if (!FindTarget(h.mTarget, t) || t.mTeam == mTeam)
+			{
+				h.mOrder = HeroState::ORD_IDLE;
+				return;
+			}
+			if (!InReach(h, t, d.mRange))
+				return;
+			if (!d.mWalker && d.mProjectile > 0 && !LineOfSight(h.mArena, h.mPos, t.mPos))
+				return;							// ranged heroes need a clear shot (StepMovement closes in)
 		}
-		if (!InReach(h, t, d.mRange))
-			return;
-		if (!d.mWalker && d.mProjectile > 0 && !LineOfSight(h.mPos, t.mPos))
-			return;								// ranged heroes need a clear shot (StepMovement closes in)
+		else
+		{
+			if (!Elapsed(mNow, h.mNextAttack) || !Elapsed(mNow, h.mDecoyUntil))
+				return;							// (a hidden Presto doesn't give himself away)
+			t = AutoAcquire();
+			if (!t.mRef.Valid())
+			{
+				h.mAutoTarget = EntityRef();
+				return;
+			}
+			h.mAutoTarget = t.mRef;
+		}
 		h.mRight = t.mPos.x > h.mPos.x;
 		if (!Elapsed(mNow, h.mNextAttack))
 			return;
 		h.mNextAttack = mNow + (uint32_t)(AttackPeriod() * 1000);
 		h.mAttackingUntil = mNow + 260;
 		h.mRevealUntil = mNow + 2000;
+		h.mDecoyUntil = std::min(h.mDecoyUntil, mNow);	// attacking ends Presto's vanishing act
 		float aDamage = Damage();
 		if (h.mSharpenLeft > 0)
 		{
-			aDamage += d.mAb[AB_W].mDamage * AbilityScale(AB_W);
+			aDamage += HeroDefOf(HERO_ITCHY).mAb[AB_W].mDamage * AbilityScale(AB_W);
 			h.mSharpenLeft--;
 		}
-		if (h.mHero == HERO_ITCHY)
+		if (h.Look() == HERO_ITCHY)
 		{
+			int aMax = HasTalent(2, 0) ? 8 : 5;
 			if (t.mRef == h.mStackTarget)
-				h.mStacks = std::min(5, h.mStacks + 1);
+				h.mStacks = std::min(aMax, h.mStacks + 1);
 			else
 			{
 				h.mStackTarget = t.mRef;
@@ -405,7 +518,9 @@ namespace Heroes
 		if (t.mStructure)
 			aDamage *= StructBonus();
 		h.mAttackCount++;
-		bool aChain = h.mHero == HERO_CLYDE && h.mAttackCount % 4 == 0;
+		int aStaticEvery = HasTalent(2, 1) ? 3 : 4;
+		bool aChain = (h.Look() == HERO_CLYDE && h.mAttackCount % aStaticEvery == 0)
+			|| (HasItem(ITEM_ELECTRIC_SCALE) && h.mAttackCount % kChainEvery == 0);
 		if (d.mProjectile > 0)
 		{
 			Projectile p;
@@ -417,8 +532,18 @@ namespace Heroes
 			p.mRadius = 12;
 			p.mHit = MakeHit(aDamage, SRC_ATTACK);
 			p.mHoming = t.mRef;
-			p.mLook = h.mHero == HERO_CLYDE ? LOOK_CLYDE_ATTACK : (h.mHero == HERO_SPEEDY ? LOOK_SLIME : LOOK_ANGIE_ATTACK);
+			switch (h.Look())
+			{
+			case HERO_CLYDE: p.mLook = LOOK_CLYDE_ATTACK; break;
+			case HERO_SPEEDY: p.mLook = LOOK_SLIME; break;
+			case HERO_PRESTO: p.mLook = LOOK_SPARKLE; break;
+			case HERO_NIKO: p.mLook = LOOK_PEARL; break;
+			case HERO_MERYL: p.mLook = LOOK_NOTE; break;
+			case HERO_SHRAPNEL: p.mLook = LOOK_BOMB; break;
+			default: p.mLook = LOOK_ANGIE_ATTACK; break;
+			}
 			p.mChain = aChain;
+			p.mAttack = true;
 			p.mStopAtWalls = false;
 			mProj.push_back(p);
 			Event e;
@@ -430,40 +555,64 @@ namespace Heroes
 			e.mMs = (uint16_t)std::min(4000.0f, Dist(t.mPos, h.mPos) / d.mProjectile * 1000 + 200);
 			e.mParam = p.mLook;
 			Emit(e);
-			Sound(h.mArena, h.mHero == HERO_CLYDE ? SND_ZAP : SND_HIT, h.mPos);
+			Sound(h.mArena, h.Look() == HERO_CLYDE ? SND_ZAP : SND_HIT, h.mPos);
 		}
 		else
-			AttackLanded(t, aDamage, false);
+			AttackLanded(t, aDamage, aChain);
 	}
 
 	void Side::AttackLanded(const Target& t, float theDamage, bool theChain)
 	{
 		HeroState& h = mHero;
 		Hit aHit = MakeHit(theDamage, SRC_ATTACK);
+		if (!t.mStructure && HasItem(ITEM_KRAKEN_TOOTH))
+		{
+			aHit.mMaxHpPct = kKrakenPct;
+			aHit.mSlowMs = 1000;
+			aHit.mSlowPct = kKrakenSlowPct;
+		}
+		if (!Elapsed(mNow, h.mMisdirectUntil))
+		{
+			// Presto's Misdirection.
+			h.mMisdirectUntil = 0;
+			aHit.mDamage += 30;
+			aHit.mSlowMs = 1000;
+			aHit.mSlowPct = std::max(aHit.mSlowPct, 0.3f);
+		}
 		Deal(t.mRef, aHit);
 		float aSteal = Lifesteal();
 		if (aSteal > 0)
-			h.mHp = std::min(MaxHp(), h.mHp + theDamage * aSteal);
+			h.mHp = std::min(MaxHp(), h.mHp + aHit.mDamage * aSteal);
+		if (HasBuff(BUFF_BALROG) && !t.mStructure)
+		{
+			// Balrog's fire: the hit burns on for a while.
+			Burn dot;
+			dot.mTarget = t.mRef;
+			dot.mTicks = 4;
+			dot.mPerTick = aHit.mDamage * kBurnShare / dot.mTicks;
+			dot.mNext = mNow + (uint32_t)(kBurnS * 1000 / dot.mTicks);
+			mBurns.push_back(dot);
+		}
 		Event e;
 		e.mType = EV_SLASH;
 		e.mArena = (uint8_t)h.mArena;
 		e.mA = t.mPos;
 		e.mB = h.mPos;
-		e.mParam = h.mHero;
+		e.mParam = (uint8_t)h.Look();
 		Emit(e);
 		Sound(h.mArena, h.Def().mProjectile > 0 ? SND_HIT : SND_SLASH, t.mPos);
 		if (theChain)
 		{
-			// Clyde's Static: the bolt jumps to two more enemies.
+			// Clyde's Static, Electric Scale: the hit jumps to two more enemies.
 			std::vector<Target> v;
-			EnemiesNear(h.mArena, t.mPos, 200, v, false);
+			EnemiesNear(h.mArena, t.mPos, 200, v, false, false);
 			int n = 0;
 			for (const Target& o : v)
 			{
 				if (o.mRef == t.mRef || n >= 2)
 					continue;
 				n++;
-				Deal(o.mRef, MakeHit(theDamage * 0.6f, SRC_ABILITY));
+				Deal(o.mRef, MakeHit(theDamage * kChainShare, SRC_ABILITY));
 				Event l;
 				l.mType = EV_LIGHTNING;
 				l.mArena = (uint8_t)h.mArena;
@@ -472,6 +621,13 @@ namespace Heroes
 				Emit(l);
 			}
 		}
+	}
+
+	void Side::AbilityHit(const Target& t, Hit theHit, float theStructMult)
+	{
+		if (t.mStructure)
+			theHit.mDamage *= StructBonus() * theStructMult;
+		Deal(t.mRef, theHit);
 	}
 
 	void Side::StepProjectiles(float theDt)
@@ -484,14 +640,27 @@ namespace Heroes
 			Target t;
 			if (p.mHoming.Valid())
 			{
-				if (!FindTarget(p.mHoming, t) || (t.mRef.mKind != ENT_HERO && t.mRef.mArena != p.mArena))
+				// Follow the target while it's in the projectile's arena.
+				std::vector<Target> v;
+				Targets(p.mArena, v);
+				bool aFound = false;
+				for (const Target& o : v)
+					if (o.mRef == p.mHoming)
+					{
+						t = o;
+						aFound = true;
+					}
+				if (!aFound)
 					aEnd = true;
 				else
 				{
 					p.mVel = Norm(t.mPos - p.mPos) * aSpeed;
 					if (Dist(p.mPos, t.mPos) <= t.mRadius + p.mRadius + aSpeed * theDt)
 					{
-						AttackLanded(t, p.mHit.mDamage, p.mChain);
+						if (p.mAttack)
+							AttackLanded(t, p.mHit.mDamage, p.mChain);
+						else
+							AbilityHit(t, p.mHit);
 						aEnd = true;
 					}
 				}
@@ -501,20 +670,19 @@ namespace Heroes
 				Vec aFrom = p.mPos;
 				p.mPos += p.mVel * theDt;
 				p.mLeft -= aSpeed * theDt;
-				if (p.mStopAtWalls && (WallBetween(aFrom, p.mPos) || p.mPos.y > FloorY(p.mPos.x)))
+				if (p.mStopAtWalls && (WallBetween(p.mArena, aFrom, p.mPos) || p.mPos.y > FloorY(p.mArena, p.mPos.x)))
 					aEnd = true;
 				else if (!p.mHoming.Valid())
 				{
-					// A skillshot hits the first enemy it touches.
+					// A skillshot hits the first enemy it touches (a piercing one, everything once).
 					std::vector<Target> v;
 					EnemiesNear(p.mArena, p.mPos, p.mRadius, v, true);
-					if (!v.empty())
+					for (const Target& a : v)
 					{
-						const Target& a = v.front();
-						Hit h = p.mHit;
-						if (a.mStructure)
-							h.mDamage *= StructBonus();
-						Deal(a.mRef, h);
+						if (std::find(p.mHitAlready.begin(), p.mHitAlready.end(), a.mRef) != p.mHitAlready.end())
+							continue;
+						p.mHitAlready.push_back(a.mRef);
+						AbilityHit(a, p.mHit);
 						Event b;
 						b.mType = EV_BURST;
 						b.mArena = (uint8_t)p.mArena;
@@ -522,8 +690,30 @@ namespace Heroes
 						b.mValue = 40;
 						b.mParam = p.mLook;
 						Emit(b);
-						Sound(p.mArena, SND_ZAP, p.mPos);
-						aEnd = true;
+						Sound(p.mArena, p.mLook == LOOK_CARD ? SND_CARD : SND_ZAP, p.mPos);
+						if (p.mOverload)
+						{
+							// Clyde's Overcharge: on to the next enemy near.
+							std::vector<Target> w;
+							EnemiesNear(p.mArena, a.mPos, 300, w, false, false);
+							for (const Target& n : w)
+								if (n.mRef != a.mRef)
+								{
+									Deal(n.mRef, p.mHit);
+									Event l;
+									l.mType = EV_LIGHTNING;
+									l.mArena = (uint8_t)p.mArena;
+									l.mA = a.mPos;
+									l.mB = n.mPos;
+									Emit(l);
+									break;
+								}
+						}
+						if (!p.mPierce)
+						{
+							aEnd = true;
+							break;
+						}
 					}
 				}
 				if (p.mLeft <= 0 || p.mPos.x < -50 || p.mPos.x > kWorldW + 50 || p.mPos.y < 0 || p.mPos.y > kWorldH)
@@ -561,7 +751,7 @@ namespace Heroes
 				EnemiesNear(z.mArena, z.mPos, z.mRadius, v, z.mBlind);
 				for (const Target& t : v)
 				{
-					Hit h = MakeHit(z.mDps * 0.5f, SRC_ZONE);
+					Hit h = MakeHit(z.mDps * 0.5f, SRC_ZONE, z.mAbility);
 					if (z.mSlowPct > 0)
 					{
 						h.mSlowMs = 700;
@@ -582,506 +772,132 @@ namespace Heroes
 		}
 	}
 
-	///////////////////////////////////////////////////////////////////////////
-	// Abilities
-	///////////////////////////////////////////////////////////////////////////
-	bool Side::CanCast(int theSlot, std::string* theWhy) const
+	void Side::StepImpacts()
 	{
-		auto No = [&](const char* s) { if (theWhy != nullptr) *theWhy = s; return false; };
-		const HeroState& h = mHero;
-		if (theSlot < 0 || theSlot >= AB_COUNT)
-			return No("?");
-		if (Over())
-			return No("The match is over.");
-		if (!h.mAlive)
-			return No("You're respawning.");
-		if (h.mRank[theSlot] <= 0)
-			return No("Unlocks at level 5.");
-		if (Stunned())
-			return No("Stunned!");
-		if (Busy())
-			return No("Not now.");
-		if (!Elapsed(mNow, h.mReadyAt[theSlot]))
-			return No("Not ready yet.");
-		return true;
+		for (size_t i = 0; i < mImpacts.size();)
+		{
+			Impact im = mImpacts[i];
+			if (!Elapsed(mNow, im.mAt))
+			{
+				i++;
+				continue;
+			}
+			mImpacts.erase(mImpacts.begin() + i);
+			std::vector<Target> v;
+			EnemiesNear(im.mArena, im.mPos, im.mRadius, v, true);
+			for (const Target& t : v)
+			{
+				Hit h = im.mHit;
+				if (h.mPush.x != 0 || h.mPush.y != 0)
+					h.mPush = Norm(t.mPos - im.mPos) * Len(h.mPush);
+				AbilityHit(t, h, im.mStructMult);
+			}
+			Burst(im.mArena, im.mPos, im.mRadius, im.mLook);
+			Sound(im.mArena, im.mSound, im.mPos);
+		}
 	}
 
-	void Side::StepAbilities(float theDt)
+	void Side::StepTurrets()
 	{
-		HeroState& h = mHero;
-		const HeroDef& d = h.Def();
-		std::vector<Target> v;
-
-		// Itchy's Lunge.
-		if (!Elapsed(mNow, h.mDashUntil))
+		bool aFortress = Rooted();
+		for (size_t i = 0; i < mTurrets.size();)
 		{
-			Vec aNext = h.mPos + h.mDashDir * (h.mDashSpeed * theDt);
-			if (SwimmerFits(aNext, d.mRadius))
-				h.mPos = aNext;
-			else
-				h.mDashUntil = mNow;
-			if (!h.mDashHit)
+			Turret& t = mTurrets[i];
+			if (Elapsed(mNow, t.mUntil))
 			{
-				EnemiesNear(h.mArena, h.mPos, d.mAb[AB_Q].mRadius, v, true);
+				Event e;
+				e.mType = EV_TURRET_END;
+				e.mArena = (uint8_t)t.mArena;
+				e.mId = t.mId;
+				e.mA = t.mPos;
+				if (t.mMine)
+					Local(e);
+				else
+					Emit(e);
+				mTurrets.erase(mTurrets.begin() + i);
+				continue;
+			}
+			if (t.mMine)
+			{
+				// Shrapnel's mine: armed after a moment, bursts when an enemy touches it.
+				std::vector<Target> v;
+				if (Elapsed(mNow, t.mNextShot))
+					EnemiesNear(t.mArena, t.mPos, 46, v, false, false);
 				if (!v.empty())
 				{
-					const Target& t = v.front();
-					float aDamage = d.mAb[AB_Q].mDamage * AbilityScale(AB_Q) * (t.mStructure ? StructBonus() : 1);
-					Deal(t.mRef, MakeHit(aDamage, SRC_ABILITY));
-					h.mDashHit = true;
-					h.mDashUntil = mNow;
-					Event e;
-					e.mType = EV_SLASH;
-					e.mArena = (uint8_t)h.mArena;
-					e.mA = t.mPos;
-					e.mB = h.mPos;
-					e.mParam = h.mHero;
-					Emit(e);
-					Sound(h.mArena, SND_SLASH, t.mPos);
-					if (t.mRef.mKind == ENT_HERO || t.mRef.mKind == ENT_MINION)
-					{
-						h.mOrder = HeroState::ORD_ATTACK;	// keep fighting what you hit
-						h.mTarget = t.mRef;
-					}
+					const AbilityDef& a = HeroDefOf(HERO_SHRAPNEL).mAb[AB_W];
+					Impact im;
+					im.mArena = t.mArena;
+					im.mPos = t.mPos;
+					im.mAt = mNow;
+					im.mRadius = a.mRadius;
+					im.mHit = MakeHit(a.mDamage * AbilityScale(AB_W), SRC_ABILITY, AB_W);
+					im.mHit.mSlowMs = 1500;
+					im.mHit.mSlowPct = a.mExtra;
+					im.mLook = LOOK_MINE;
+					im.mSound = SND_BOOM;
+					mImpacts.push_back(im);
+					t.mUntil = mNow;			// gone next step
 				}
+				i++;
+				continue;
 			}
-		}
-
-		// Rhubarb's Leap.
-		if (h.mLeapUntil != 0)
-		{
-			float aSpan = (float)std::max<uint32_t>(1, h.mLeapUntil - h.mLeapStart);
-			float t = Clamp((float)(int32_t)(mNow - h.mLeapStart) / aSpan, 0, 1);
-			h.mPos = Lerp(h.mLeapFrom, h.mLeapTo, t) - Vec(0, std::sin(t * 3.14159f) * 150);
-			if (t >= 1)
+			// Niko's turret: a pearl at the nearest enemy in reach (twice as fast in Fortress).
+			const AbilityDef& a = HeroDefOf(HERO_NIKO).mAb[AB_Q];
+			if (Elapsed(mNow, t.mNextShot))
 			{
-				h.mLeapUntil = 0;
-				h.mPos = h.mLeapTo;
-				const AbilityDef& a = d.mAb[AB_Q];
-				EnemiesNear(h.mArena, h.mPos, a.mRadius, v, true);
+				std::vector<Target> v;
+				EnemiesNear(t.mArena, t.mPos, a.mRadius, v, false, false);
+				const Target* aBest = nullptr;
 				for (const Target& o : v)
+					if (o.mRef.mKind != ENT_FISH && (aBest == nullptr || Dist(o.mPos, t.mPos) < Dist(aBest->mPos, t.mPos)))
+						aBest = &o;
+				if (aBest != nullptr)
 				{
-					Hit hit = MakeHit(a.mDamage * AbilityScale(AB_Q) * (o.mStructure ? StructBonus() : 1), SRC_ABILITY);
-					if (!o.mStructure)
-						hit.mStunMs = (uint16_t)(a.mExtra * 1000);
-					Deal(o.mRef, hit);
+					t.mNextShot = mNow + (uint32_t)(a.mExtra * (aFortress ? 0.5f : 1.0f) * 1000);
+					Projectile p;
+					p.mId = ((uint32_t)mPlayer << 24) | (mNextId++ & 0xFFFFFF);
+					p.mArena = t.mArena;
+					p.mPos = t.mPos - Vec(0, 14);
+					p.mVel = Norm(aBest->mPos - p.mPos) * 620;
+					p.mLeft = a.mRadius * 2;
+					p.mRadius = 10;
+					p.mHit = MakeHit(a.mDamage * AbilityScale(AB_Q) * (HasTalent(0, 1) ? 1.5f : 1.0f), SRC_ABILITY, AB_Q);
+					p.mHoming = aBest->mRef;
+					p.mLook = LOOK_PEARL;
+					p.mStopAtWalls = false;
+					mProj.push_back(p);
+					Event e;
+					e.mType = EV_PROJECTILE;
+					e.mArena = (uint8_t)p.mArena;
+					e.mId = p.mId;
+					e.mA = p.mPos;
+					e.mB = p.mVel;
+					e.mMs = (uint16_t)std::min(3000.0f, Dist(aBest->mPos, p.mPos) / 620 * 1000 + 150);
+					e.mParam = LOOK_PEARL;
+					Emit(e);
+					Sound(t.mArena, SND_TOWER, t.mPos);
 				}
-				Event e;
-				e.mType = EV_BURST;
-				e.mArena = (uint8_t)h.mArena;
-				e.mA = h.mPos;
-				e.mValue = a.mRadius;
-				e.mParam = LOOK_LEAP;
-				Emit(e);
-				Sound(h.mArena, SND_EXPLODE, h.mPos);
 			}
-		}
-
-		// Itchy's Swordstorm.
-		if (!Elapsed(mNow, h.mStormUntil) && Elapsed(mNow, h.mStormNext))
-		{
-			const AbilityDef& a = d.mAb[AB_R];
-			h.mStormNext = mNow + (uint32_t)(a.mExtra * 1000);
-			EnemiesNear(h.mArena, h.mPos, a.mRadius, v, true);
-			for (const Target& o : v)
-				Deal(o.mRef, MakeHit(a.mDamage * AbilityScale(AB_R) * (o.mStructure ? StructBonus() : 1), SRC_ABILITY));
-			if (!v.empty())
-				Sound(h.mArena, SND_SLASH, h.mPos);
-		}
-
-		// Clyde's Thunderstorm: every enemy in the tank, a few times.
-		if (h.mThunderLeft > 0 && Elapsed(mNow, h.mThunderNext))
-		{
-			const AbilityDef& a = d.mAb[AB_R];
-			h.mThunderLeft--;
-			h.mThunderNext = mNow + (uint32_t)(a.mDurationS / a.mExtra * 1000);
-			std::vector<Target> all;
-			Targets(h.mArena, all);
-			for (const Target& o : all)
-			{
-				if (o.mTeam == mTeam || o.mStructure)
-					continue;
-				float aVsFish = o.mRef.mKind == ENT_FISH ? 0.25f : 1.0f;	// thins a farm, doesn't erase it
-				Deal(o.mRef, MakeHit(a.mDamage * AbilityScale(AB_R) * aVsFish, SRC_ABILITY));
-				Event e;
-				e.mType = EV_LIGHTNING;
-				e.mArena = (uint8_t)h.mArena;
-				e.mA = Vec(o.mPos.x + 30, kSurfaceY - 20);
-				e.mB = o.mPos;
-				Emit(e);
-			}
-			Sound(h.mArena, SND_THUNDER, h.mPos);
-		}
-
-		// Speedy's Slime Trail.
-		if (!Elapsed(mNow, h.mSlimeUntil) && Dist(h.mPos, h.mLastSlime) > 34)
-		{
-			const AbilityDef& a = d.mAb[AB_Q];
-			h.mLastSlime = h.mPos;
-			Zone z;
-			z.mArena = h.mArena;
-			z.mPos = h.mPos + Vec(0, d.mRadius * 0.6f);
-			z.mRadius = a.mRadius;
-			z.mUntil = mNow + (uint32_t)(a.mDurationS * 1000);
-			z.mSlowPct = a.mExtra;
-			z.mLook = LOOK_SLIME;
-			mZones.push_back(z);
-			Event e;
-			e.mType = EV_ZONE;
-			e.mArena = (uint8_t)z.mArena;
-			e.mA = z.mPos;
-			e.mValue = z.mRadius;
-			e.mMs = (uint16_t)(a.mDurationS * 1000);
-			e.mParam = LOOK_SLIME;
-			Emit(e);
-		}
-
-		// Angie's Heal Beam.
-		if (!Elapsed(mNow, h.mHealUntil) && Elapsed(mNow, h.mHealNext))
-		{
-			h.mHealNext = mNow + 250;
-			if (h.mHealTarget.mKind == ENT_HERO)
-				h.mHp = std::min(MaxHp(), h.mHp + h.mHealPerTick);
-			else
-			{
-				Hit hit;
-				hit.mTeam = (uint8_t)mTeam;
-				hit.mHeal = h.mHealPerTick * 0.6f;		// towers and the core heal slower
-				Deal(h.mHealTarget, hit);
-			}
+			i++;
 		}
 	}
 
-	// Angie's friendly aim: an own tower or core near the mouse (in her own tank), else herself.
-	static EntityRef FriendNear(const Side& s, Vec theAim, float theRange, Vec& thePos)
+	void Side::StepBurns()
 	{
-		const HeroState& h = s.mHero;
-		thePos = h.mPos;
-		if (h.mArena != s.mTeam)
-			return EntityRef::Hero(s.mPlayer);
-		const MapDef& m = TheMap();
-		EntityRef aBest = EntityRef::Hero(s.mPlayer);
-		float aBestD = 130;
-		for (int i = 0; i < 2; i++)
-			if (s.mArena.mTower[i].mAlive && Dist(m.mTower[i], theAim) < aBestD && Dist(m.mTower[i], h.mPos) < theRange + kTowerR)
+		for (size_t i = 0; i < mBurns.size();)
+		{
+			Burn& d = mBurns[i];
+			if (Elapsed(mNow, d.mNext))
 			{
-				aBestD = Dist(m.mTower[i], theAim);
-				aBest = EntityRef::Of(s.mTeam, ENT_TOWER, (uint32_t)i);
-				thePos = m.mTower[i];
+				d.mNext = mNow + (uint32_t)(kBurnS * 1000 / 4);
+				d.mTicks--;
+				Deal(d.mTarget, MakeHit(d.mPerTick, SRC_BURN));
 			}
-		if (Dist(m.mCore, theAim) < aBestD && Dist(m.mCore, h.mPos) < theRange + kCoreR)
-		{
-			aBest = EntityRef::Of(s.mTeam, ENT_CORE, 0);
-			thePos = m.mCore;
-		}
-		return aBest;
-	}
-
-	bool Side::Cast(int theSlot, Vec theAim)
-	{
-		if (!CanCast(theSlot, &mLastRefusal))
-			return false;
-		mLastRefusal.clear();
-		HeroState& h = mHero;
-		const HeroDef& d = h.Def();
-		const AbilityDef& a = d.mAb[theSlot];
-		float aScale = AbilityScale(theSlot);
-		int aRank = theSlot == AB_R ? std::max(1, h.mRank[AB_R]) : h.mRank[theSlot];
-		h.mReadyAt[theSlot] = mNow + (uint32_t)(a.mCooldownS * RankCooldown(aRank) * CooldownMult() * 1000);
-		Vec aDir = Norm(theAim - h.mPos);
-		if (aDir.x == 0 && aDir.y == 0)
-			aDir = Vec(h.mRight ? 1.0f : -1.0f, 0);
-		Vec aOff = theAim - h.mPos;
-		if (Len(aOff) > a.mRange)
-			aOff = Norm(aOff) * a.mRange;
-		Vec aPoint = h.mPos + aOff;
-		if (aDir.x != 0)
-			h.mRight = aDir.x > 0;
-		h.mRevealUntil = mNow + 2000;
-		std::vector<Target> v;
-
-		auto Burst = [&](Vec thePos, float theRadius, uint8_t theLook) {
-			Event e;
-			e.mType = EV_BURST;
-			e.mArena = (uint8_t)h.mArena;
-			e.mA = thePos;
-			e.mValue = theRadius;
-			e.mParam = theLook;
-			Emit(e);
-		};
-		auto AddZone = [&](Vec thePos, float theRadius, float theDps, float theSlow, bool theBlind, uint8_t theLook) {
-			Zone z;
-			z.mArena = h.mArena;
-			z.mPos = thePos;
-			z.mRadius = theRadius;
-			z.mUntil = mNow + (uint32_t)(a.mDurationS * 1000);
-			z.mNextTick = mNow;
-			z.mDps = theDps;
-			z.mSlowPct = theSlow;
-			z.mBlind = theBlind;
-			z.mLook = theLook;
-			mZones.push_back(z);
-			Event e;
-			e.mType = EV_ZONE;
-			e.mArena = (uint8_t)z.mArena;
-			e.mA = thePos;
-			e.mValue = theRadius;
-			e.mMs = (uint16_t)(a.mDurationS * 1000);
-			e.mParam = theLook;
-			Emit(e);
-		};
-
-		switch (h.mHero * AB_COUNT + theSlot)
-		{
-		// ---- Itchy ----
-		case HERO_ITCHY * AB_COUNT + AB_Q:
-			h.mDashUntil = mNow + (uint32_t)(a.mDurationS * 1000);
-			h.mDashDir = aDir;
-			h.mDashSpeed = a.mRange / a.mDurationS;
-			h.mDashHit = false;
-			h.mPath.clear();
-			Burst(h.mPos, 30, LOOK_LUNGE);
-			Sound(h.mArena, SND_SLASH, h.mPos);
-			break;
-		case HERO_ITCHY * AB_COUNT + AB_W:
-			h.mSharpenLeft = (int)a.mExtra;
-			h.mSharpenUntil = mNow + (uint32_t)(a.mDurationS * 1000);
-			Text(h.mArena, h.mPos - Vec(0, 56), "Sharpened!", TC_INFO);
-			Sound(h.mArena, SND_SHIELD, h.mPos);
-			break;
-		case HERO_ITCHY * AB_COUNT + AB_E:
-			h.mUntargetableUntil = mNow + (uint32_t)(a.mDurationS * 1000);
-			h.mSpeedUntil = mNow + (uint32_t)(a.mExtra * 1000);
-			h.mSpeedPct = a.mDamage;
-			Burst(h.mPos, 40, LOOK_TELEPORT);
-			Sound(h.mArena, SND_WARP, h.mPos);
-			break;
-		case HERO_ITCHY * AB_COUNT + AB_R:
-			h.mStormUntil = mNow + (uint32_t)(a.mDurationS * 1000);
-			h.mStormNext = mNow;
-			Burst(h.mPos, a.mRadius, LOOK_STORM);
-			Sound(h.mArena, SND_ROAR, h.mPos);
-			break;
-
-		// ---- Clyde ----
-		case HERO_CLYDE * AB_COUNT + AB_Q:
-		{
-			Projectile p;
-			p.mId = ((uint32_t)mPlayer << 24) | (mNextId++ & 0xFFFFFF);
-			p.mArena = h.mArena;
-			p.mPos = h.mPos;
-			p.mVel = aDir * a.mExtra;
-			p.mLeft = a.mRange;
-			p.mRadius = a.mRadius;
-			p.mHit = MakeHit(a.mDamage * aScale, SRC_ABILITY);
-			p.mLook = LOOK_ZAP;
-			mProj.push_back(p);
-			Event e;
-			e.mType = EV_PROJECTILE;
-			e.mArena = (uint8_t)p.mArena;
-			e.mId = p.mId;
-			e.mA = p.mPos;
-			e.mB = p.mVel;
-			e.mMs = (uint16_t)(a.mRange / a.mExtra * 1000);
-			e.mParam = LOOK_ZAP;
-			Emit(e);
-			Sound(h.mArena, SND_ZAP, h.mPos);
-			break;
-		}
-		case HERO_CLYDE * AB_COUNT + AB_W:
-			AddZone(aPoint, a.mRadius, a.mDamage * aScale, a.mExtra, false, LOOK_STATIC);
-			Sound(h.mArena, SND_ZAP, aPoint);
-			break;
-		case HERO_CLYDE * AB_COUNT + AB_E:
-		{
-			Vec aTo = SwimmerFits(aPoint, d.mRadius) ? aPoint : NearestOpen(aPoint);
-			Burst(h.mPos, 36, LOOK_TELEPORT);
-			h.mPos = aTo;
-			h.mPath.clear();
-			if (h.mOrder == HeroState::ORD_MOVE)
-				h.mOrder = HeroState::ORD_IDLE;
-			Burst(h.mPos, 36, LOOK_TELEPORT);
-			Sound(h.mArena, SND_WARP, h.mPos);
-			break;
-		}
-		case HERO_CLYDE * AB_COUNT + AB_R:
-			h.mThunderLeft = (int)a.mExtra;
-			h.mThunderNext = mNow;
-			Text(h.mArena, h.mPos - Vec(0, 56), "Thunderstorm!", TC_INFO);
-			break;
-
-		// ---- Rhubarb ----
-		case HERO_RHUBARB * AB_COUNT + AB_Q:
-			h.mLeapFrom = h.mPos;
-			h.mLeapTo = WalkerPos(Clamp(theAim.x, h.mPos.x - a.mRange, h.mPos.x + a.mRange), d.mRadius);
-			h.mLeapStart = mNow;
-			h.mLeapUntil = mNow + (uint32_t)(a.mDurationS * 1000);
-			h.mHopUntil = 0;
-			h.mOrder = HeroState::ORD_IDLE;
-			Sound(h.mArena, SND_ROAR, h.mPos);
-			break;
-		case HERO_RHUBARB * AB_COUNT + AB_W:
-		{
-			// The first enemy along the line gets pulled in.
-			std::vector<Target> all;
-			Targets(h.mArena, all);
-			Vec aEnd = h.mPos + aDir * a.mRange;
-			const Target* aBest = nullptr;
-			float aBestD = 1e9f;
-			for (const Target& o : all)
-			{
-				if (o.mTeam == mTeam || o.mStructure || o.mRef.mKind == ENT_FISH)
-					continue;
-				if (DistPointSeg(o.mPos, h.mPos, aEnd) > a.mRadius + o.mRadius)
-					continue;
-				float dd = Dist(o.mPos, h.mPos);
-				if (dd < aBestD && FirstBlock(h.mPos, o.mPos) > 1)
-				{
-					aBestD = dd;
-					aBest = &o;
-				}
-			}
-			Event e;
-			e.mType = EV_BEAM;
-			e.mArena = (uint8_t)h.mArena;
-			e.mA = h.mPos;
-			e.mB = aBest != nullptr ? aBest->mPos : aEnd;
-			e.mMs = 300;
-			e.mParam = 1;						// claw
-			Emit(e);
-			if (aBest != nullptr)
-			{
-				Hit hit = MakeHit(a.mDamage * aScale, SRC_ABILITY);
-				hit.mPull = true;
-				hit.mPullTo = h.mPos + aDir * (d.mRadius + aBest->mRadius + 8);
-				Deal(aBest->mRef, hit);
-				h.mOrder = HeroState::ORD_ATTACK;
-				h.mTarget = aBest->mRef;
-			}
-			Sound(h.mArena, SND_CHOMP, h.mPos);
-			break;
-		}
-		case HERO_RHUBARB * AB_COUNT + AB_E:
-			h.mImmuneUntil = mNow + (uint32_t)(a.mDurationS * 1000);
-			h.mTauntUntil = h.mImmuneUntil;
-			Burst(h.mPos, 50, LOOK_HALO);
-			Sound(h.mArena, SND_SHIELD, h.mPos);
-			break;
-		case HERO_RHUBARB * AB_COUNT + AB_R:
-			EnemiesNear(h.mArena, h.mPos, a.mRadius, v, true);
-			for (const Target& o : v)
-			{
-				Hit hit = MakeHit(a.mDamage * aScale * (o.mStructure ? StructBonus() : 1), SRC_ABILITY);
-				if (!o.mStructure)
-				{
-					hit.mStunMs = (uint16_t)(a.mExtra * 1000);
-					hit.mPush = Norm(o.mPos - h.mPos) * 110;
-				}
-				Deal(o.mRef, hit);
-			}
-			Burst(h.mPos, a.mRadius, LOOK_SLAM);
-			Sound(h.mArena, SND_EXPLODE, h.mPos);
-			break;
-
-		// ---- Angie ----
-		case HERO_ANGIE * AB_COUNT + AB_Q:
-		{
-			Vec aAt;
-			h.mHealTarget = FriendNear(*this, theAim, a.mRange, aAt);
-			h.mHealUntil = mNow + (uint32_t)(a.mDurationS * 1000);
-			h.mHealNext = mNow;
-			h.mHealPerTick = a.mDamage * aScale / (a.mDurationS / 0.25f);
-			Event e;
-			e.mType = EV_BEAM;
-			e.mArena = (uint8_t)h.mArena;
-			e.mA = h.mPos;
-			e.mB = aAt;
-			e.mMs = (uint16_t)(a.mDurationS * 1000);
-			e.mParam = 0;						// heal
-			Emit(e);
-			Sound(h.mArena, SND_HEAL, aAt);
-			break;
-		}
-		case HERO_ANGIE * AB_COUNT + AB_W:
-		{
-			Vec aAt;
-			EntityRef aWho = FriendNear(*this, theAim, a.mRange, aAt);
-			if (aWho.mKind == ENT_HERO)
-			{
-				h.mShield = std::max(h.mShield, a.mDamage * aScale);
-				h.mShieldUntil = mNow + (uint32_t)(a.mDurationS * 1000);
-			}
+			if (d.mTicks <= 0)
+				mBurns.erase(mBurns.begin() + i);
 			else
-			{
-				Hit hit;
-				hit.mTeam = (uint8_t)mTeam;
-				hit.mShield = a.mDamage * aScale;
-				hit.mShieldMs = (uint16_t)(a.mDurationS * 1000);
-				Deal(aWho, hit);
-			}
-			Burst(aAt, 60, LOOK_HALO);
-			Sound(h.mArena, SND_SHIELD, aAt);
-			break;
+				i++;
 		}
-		case HERO_ANGIE * AB_COUNT + AB_E:
-		{
-			std::vector<Target> all;
-			Targets(h.mArena, all);
-			for (const Target& o : all)
-				if (o.mRef.mKind == ENT_MINION && o.mTeam != mTeam && Dist(o.mPos, h.mPos) < a.mRadius + o.mRadius)
-				{
-					Hit hit;
-					hit.mTeam = (uint8_t)mTeam;
-					hit.mPlayer = (int8_t)mPlayer;
-					hit.mCharmMs = (uint16_t)(a.mDurationS * 1000);
-					Deal(o.mRef, hit);
-				}
-			Burst(h.mPos, a.mRadius, LOOK_CHARM);
-			Sound(h.mArena, SND_HEAL, h.mPos);
-			break;
-		}
-		case HERO_ANGIE * AB_COUNT + AB_R:
-		{
-			mArena.Revive((int)a.mExtra, mNow);
-			for (int i = 0; i < 2; i++)
-				if (mArena.mTower[i].mAlive)
-				{
-					Hit hit;
-					hit.mTeam = (uint8_t)mTeam;
-					hit.mHeal = a.mDamage * aScale;
-					mArena.ApplyHit(EntityRef::Of(mTeam, ENT_TOWER, (uint32_t)i), hit, mNow);
-				}
-			h.mHp = MaxHp();
-			Burst(h.mPos, 120, LOOK_RESURRECT);
-			Burst(TheMap().mCore, 160, LOOK_RESURRECT);
-			Sound(h.mArena, SND_HEAL, h.mPos);
-			break;
-		}
-
-		// ---- Speedy ----
-		case HERO_SPEEDY * AB_COUNT + AB_Q:
-			h.mSlimeUntil = mNow + (uint32_t)(a.mDurationS * 1000);
-			h.mLastSlime = Vec(-1000, -1000);
-			Sound(h.mArena, SND_SPLASH, h.mPos);
-			break;
-		case HERO_SPEEDY * AB_COUNT + AB_W:
-			AddZone(aPoint, a.mRadius, a.mDamage * aScale, 0, true, LOOK_STINK);
-			Sound(h.mArena, SND_STINK, aPoint);
-			break;
-		case HERO_SPEEDY * AB_COUNT + AB_E:
-			h.mImmuneUntil = mNow + (uint32_t)(a.mDurationS * 1000);
-			Burst(h.mPos, 44, LOOK_HALO);
-			Sound(h.mArena, SND_SHIELD, h.mPos);
-			break;
-		case HERO_SPEEDY * AB_COUNT + AB_R:
-			h.mGoldRushUntil = mNow + (uint32_t)(a.mDurationS * 1000);
-			Burst(h.mPos, 90, LOOK_GOLD);
-			Text(h.mArena, h.mPos - Vec(0, 56), "Gold Rush!", TC_MONEY);
-			Sound(h.mArena, SND_DIAMOND, h.mPos);
-			break;
-		default:
-			break;
-		}
-		return true;
 	}
 }

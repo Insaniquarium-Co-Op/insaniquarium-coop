@@ -50,11 +50,12 @@ namespace Heroes
 	void Mirror::AddArena(uint32_t theNow, const ArenaSnap& theSnap, int64_t theSentAt)
 	{
 		uint32_t anAt = LocalTime(theNow, theSentAt);
-		if (!mArena.empty() && (int32_t)(anAt - mArena.back().mAt) <= 0)
-			anAt = mArena.back().mAt + 1;
-		mArena.push_back({ anAt, theSnap });
-		while (mArena.size() > 8)
-			mArena.pop_front();
+		std::deque<TimedArena>& q = mArena[theSnap.mArena % kArenaCount];
+		if (!q.empty() && (int32_t)(anAt - q.back().mAt) <= 0)
+			anAt = q.back().mAt + 1;
+		q.push_back({ anAt, theSnap });
+		while (q.size() > 8)
+			q.pop_front();
 	}
 
 	void Mirror::AddHero(uint32_t theNow, const HeroSnap& theSnap, int64_t theSentAt)
@@ -98,18 +99,23 @@ namespace Heroes
 				}
 	}
 
-	ArenaSnap Mirror::ArenaAt(uint32_t theTime) const
+	ArenaSnap Mirror::ArenaAt(int theArena, uint32_t theTime) const
 	{
-		if (mArena.empty())
-			return ArenaSnap();
+		const std::deque<TimedArena>& q = mArena[theArena % kArenaCount];
+		if (q.empty())
+		{
+			ArenaSnap s;
+			s.mArena = (uint8_t)theArena;
+			return s;
+		}
 		// The latest snapshot at or before theTime, and the one after it.
-		size_t b = mArena.size() - 1;
-		while (b > 0 && (int32_t)(mArena[b - 1].mAt - theTime) >= 0)
+		size_t b = q.size() - 1;
+		while (b > 0 && (int32_t)(q[b - 1].mAt - theTime) >= 0)
 			b--;
 		if (b == 0)
-			return mArena.front().mSnap;
-		const TimedArena& aOld = mArena[b - 1];
-		const TimedArena& aNew = mArena[b];
+			return q.front().mSnap;
+		const TimedArena& aOld = q[b - 1];
+		const TimedArena& aNew = q[b];
 		uint32_t aSpan = std::max<uint32_t>(1, aNew.mAt - aOld.mAt);
 		float t = Clamp((float)(int32_t)(theTime - aOld.mAt) / aSpan, 0, 1);
 		ArenaSnap s = aNew.mSnap;
@@ -151,8 +157,8 @@ namespace Heroes
 	{
 		const HeroDef& d = mHero.Def();
 		if (d.mWalker)
-			return WalkerPos(TheMap().mCore.x - 110, d.mRadius);
-		return TheMap().mCore - Vec(0, 150);
+			return WalkerPos(mTeam, TankMap().mCore.x - 110, d.mRadius);
+		return TankMap().mCore - Vec(0, 150);
 	}
 
 	void Side::Init(int theTeam, int thePlayer, int theHero, int theOtherPlayer, uint64_t theSeed, uint32_t theNow)
@@ -166,6 +172,8 @@ namespace Heroes
 		mNow = mStart = mLastStep = theNow;
 		mNextId = 1;
 		mArena.Init(theTeam, theSeed, theNow);
+		if (Owns(kTrench))
+			mTrench.Init(theSeed * 31 + 7, theNow);
 		mHero = HeroState();
 		mHero.mHero = (uint8_t)std::clamp(theHero, 0, (int)HERO_COUNT - 1);
 		mHero.mPlayer = thePlayer;
@@ -189,42 +197,125 @@ namespace Heroes
 		return s;
 	}
 
-	float Side::MaxHp() const { return mHero.Def().mHealth * LevelScale(mHero.mLevel) + SumItems(mHero, [](const ItemDef& d) { return d.mHealth; }); }
-	float Side::Damage() const { return mHero.Def().mDamage * LevelScale(mHero.mLevel) + SumItems(mHero, [](const ItemDef& d) { return d.mDamage; }); }
+	int Side::ItemCount(int theItem) const
+	{
+		int n = 0;
+		for (uint8_t i : mHero.mItems)
+			n += i == theItem;
+		return n;
+	}
+
+	float Side::MaxHp() const
+	{
+		float h = mHero.Def().mHealth * LevelScale(mHero.mLevel) * (mHero.Evolved() ? 1 + kEvolveBonus : 1.0f);
+		if (HasBuff(BUFF_GUS))
+			h *= 1 + kGusHealth;
+		if (HasBuff(BUFF_BOSS))
+			h *= 1 + kBossSurge;
+		return h + SumItems(mHero, [](const ItemDef& d) { return d.mHealth; });
+	}
+
+	float Side::Damage() const
+	{
+		float d = mHero.Def().mDamage * LevelScale(mHero.mLevel) * (mHero.Evolved() ? 1 + kEvolveBonus : 1.0f);
+		if (HasBuff(BUFF_BOSS))
+			d *= 1 + kBossSurge;
+		return d + SumItems(mHero, [](const ItemDef& d) { return d.mDamage; });
+	}
+
 	float Side::Speed() const
 	{
-		float s = mHero.Def().mSpeed * (1.0f + SumItems(mHero, [](const ItemDef& d) { return d.mSpeedPct; }));
-		if (!Elapsed(mNow, mHero.mSpeedUntil))
-			s *= 1.0f + mHero.mSpeedPct;
-		if (!Elapsed(mNow, mHero.mSlowUntil))
-			s *= 1.0f - mHero.mSlowPct;
+		const HeroState& h = mHero;
+		float s = h.Def().mSpeed * (1.0f + SumItems(h, [](const ItemDef& d) { return d.mSpeedPct; }));
+		if (HasItem(ITEM_SPEED_KELP) && Elapsed(mNow, h.mLastHurtAt + (uint32_t)(kKelpCalmS * 1000)))
+			s *= 1 + kKelpCalmPct;
+		if (HasBuff(BUFF_BOSS))
+			s *= 1 + kBossSurge * 0.5f;
+		if (h.mHero == HERO_ANGIE && HasTalent(2, 1))
+			s *= 1.2f;
+		if (!Elapsed(mNow, h.mAnthemUntil))
+			s *= 1 + h.Def().mAb[AB_W].mDamage;
+		if (!Elapsed(mNow, h.mSpeedUntil))
+			s *= 1.0f + h.mSpeedPct;
+		if (!Elapsed(mNow, h.mSlowUntil))
+			s *= 1.0f - h.mSlowPct;
+		if (Rooted())
+			s *= HasTalent(1, 1) ? 0.4f : 0.0f;
 		return s;
 	}
+
 	float Side::AttackPeriod() const
 	{
-		float p = mHero.Def().mAttackS;
-		if (mHero.mHero == HERO_ITCHY)
-			p /= 1.0f + 0.08f * mHero.mStacks;
+		const HeroState& h = mHero;
+		float p = h.Def().mAttackS;
+		if (h.Look() == HERO_ITCHY)
+			p /= 1.0f + 0.08f * h.mStacks;
+		if (HasBuff(BUFF_BOSS))
+			p /= 1 + kBossSurge;
+		if (!Elapsed(mNow, h.mAnthemUntil))
+			p /= 1 + h.Def().mAb[AB_W].mDamage;
 		return p;
 	}
-	float Side::CooldownMult() const { return 1.0f - std::min(0.4f, SumItems(mHero, [](const ItemDef& d) { return d.mCdrPct; })); }
+
+	float Side::CooldownMult() const { return 1.0f - std::min(0.45f, SumItems(mHero, [](const ItemDef& d) { return d.mCdrPct; })); }
+
 	float Side::AbilityScale(int theSlot) const
 	{
 		int aRank = theSlot == AB_R ? std::max(1, mHero.mRank[AB_R]) : mHero.mRank[theSlot];
-		return RankScale(aRank) * (1.0f + 0.04f * (mHero.mLevel - 1));
+		float s = RankScale(aRank) * (1.0f + 0.04f * (mHero.mLevel - 1)) * (1.0f + SumItems(mHero, [](const ItemDef& d) { return d.mAbilityPct; }));
+		if (HasBuff(BUFF_BOSS))
+			s *= 1 + kBossSurge;
+		return s;
 	}
+
 	float Side::ArmorVsStructures() const
 	{
 		float a = 1.0f - std::min(0.5f, SumItems(mHero, [](const ItemDef& d) { return d.mArmorPct; }));
-		if (mHero.mHero == HERO_RHUBARB)
+		if (mHero.Look() == HERO_RHUBARB)
 			a *= 0.7f;
 		return a;
 	}
-	float Side::StructBonus() const { return 1.0f + SumItems(mHero, [](const ItemDef& d) { return d.mStructPct; }) + (mHero.Def().mWalker ? 0.25f : 0.0f); }
+
+	float Side::StructBonus() const
+	{
+		return 1.0f + SumItems(mHero, [](const ItemDef& d) { return d.mStructPct; }) + (mHero.Def().mWalker ? 0.25f : 0.0f)
+			+ (mHero.Look() == HERO_SHRAPNEL ? 0.2f : 0.0f);
+	}
+
 	float Side::Lifesteal() const { return SumItems(mHero, [](const ItemDef& d) { return d.mLifestealPct; }); }
 	uint32_t Side::CooldownLeft(int theSlot) const { return Elapsed(mNow, mHero.mReadyAt[theSlot]) ? 0 : mHero.mReadyAt[theSlot] - mNow; }
+	uint32_t Side::CooldownTotal(int theSlot) const { return std::max<uint32_t>(1, mCastTotal[theSlot]); }
 	bool Side::Busy() const { return !Elapsed(mNow, mHero.mDashUntil) || !Elapsed(mNow, mHero.mLeapUntil); }
 	bool Side::Hopping() const { return !Elapsed(mNow, mHero.mHopUntil); }
+	bool Side::Rooted() const { return !Elapsed(mNow, mHero.mFortressUntil); }
+
+	///////////////////////////////////////////////////////////////////////////
+	// Talents
+	///////////////////////////////////////////////////////////////////////////
+	int Side::PendingTalent() const
+	{
+		for (int t = 0; t < kTalentTiers; t++)
+			if (mHero.mTalent[t] < 0 && mHero.mLevel >= kTalentLevel[t])
+				return t;
+		return -1;
+	}
+
+	bool Side::PickTalent(int theChoice)
+	{
+		int t = PendingTalent();
+		if (t < 0 || theChoice < 0 || theChoice > 1 || Over())
+			return false;
+		mHero.mTalent[t] = (int8_t)theChoice;
+		Sound(mHero.mArena, SND_LEVEL, mHero.mPos);
+		Text(mHero.mArena, mHero.mPos - Vec(0, 70), HeroDefOf(mHero.mHero).mTalent[t][theChoice].mName, TC_XP);
+		return true;
+	}
+
+	bool Side::HasTalent(int theTier, int theChoice) const
+	{
+		// A copy (Copycat) fights with the copied hero's kit but none of its talents.
+		return mHero.mCopyHero < 0 && theTier >= 0 && theTier < kTalentTiers && mHero.mTalent[theTier] == theChoice;
+	}
 
 	///////////////////////////////////////////////////////////////////////////
 	// Step
@@ -239,7 +330,7 @@ namespace Heroes
 			Receive(p);
 		mOther.UpdateDelay();
 		for (size_t i = 0; i < mEffects.size();)
-			if (Elapsed(mNow, mEffects[i].mAt + 1500 + mEffects[i].mEvent.mMs))
+			if (Elapsed(mNow, mEffects[i].mAt + 2500 + mEffects[i].mEvent.mMs))
 				mEffects.erase(mEffects.begin() + i);
 			else
 				i++;
@@ -250,10 +341,17 @@ namespace Heroes
 		StepHero(dt);
 		StepProjectiles(dt);
 		StepZones();
+		StepImpacts();
+		StepTurrets();
+		StepBurns();
 		StepArena();
+		if (Owns(kTrench))
+			StepTrench();
 
-		// Passive income: items, and Speedy's Scavenger.
-		float aGold = SumItems(mHero, [](const ItemDef& d) { return d.mGoldPerS; }) + (mHero.mHero == HERO_SPEEDY ? 1.0f : 0.0f);
+		// Passive income: items, and Speedy's Scavenger (Hoarder: more).
+		float aGold = SumItems(mHero, [](const ItemDef& d) { return d.mGoldPerS; });
+		if (mHero.mHero == HERO_SPEEDY)
+			aGold += HasTalent(2, 0) ? 4.0f : 1.0f;
 		mPassiveGold += aGold * dt;
 		if (mPassiveGold >= 1)
 		{
@@ -276,6 +374,54 @@ namespace Heroes
 		SendState();
 	}
 
+	HeroPresence Side::MyPresence() const
+	{
+		const HeroState& h = mHero;
+		HeroPresence p;
+		p.mPlayer = mPlayer;
+		p.mTeam = mTeam;
+		p.mPos = h.mPos;
+		p.mRadius = h.Def().mRadius;
+		p.mAlive = h.mAlive;
+		p.mTargetable = h.mAlive && Elapsed(mNow, h.mUntargetableUntil) && Elapsed(mNow, h.mImmuneUntil) && !h.mHidden
+			&& Elapsed(mNow, h.mDecoyUntil);
+		p.mTaunting = !Elapsed(mNow, h.mTauntUntil);
+		p.mMagnet = h.mHero == HERO_SPEEDY && HasTalent(1, 1) && !Elapsed(mNow, h.mGoldRushUntil);
+		p.mHurtHeroAt = mHitHeroAt;
+		return p;
+	}
+
+	bool Side::OtherPresence(int theArena, HeroPresence& theOut) const
+	{
+		HeroSnap o;
+		if (!OtherHeroIn(theArena, &o) || !(o.mFlags & HF_ALIVE))
+			return false;
+		theOut = HeroPresence();
+		theOut.mPlayer = o.mPlayer;
+		theOut.mTeam = o.mTeam;
+		theOut.mPos = o.mPos;
+		theOut.mRadius = HeroDefOf(o.mHero).mRadius;
+		theOut.mAlive = true;
+		theOut.mTargetable = !(o.mFlags & (HF_HIDDEN | HF_UNTARGETABLE | HF_IMMUNE));
+		theOut.mTaunting = (o.mFlags & HF_TAUNT) != 0;
+		theOut.mMagnet = (o.mFlags & HF_GOLDRUSH) && o.mHero == HERO_SPEEDY && ((o.mTalents >> 2) & 3) == 2;
+		theOut.mHurtMyHeroAt = mHurtByAt[o.mPlayer % kMaxPlayers];
+		theOut.mHurtHeroAt = mHurtByAt[o.mPlayer % kMaxPlayers];
+		return true;
+	}
+
+	void Side::ApplyRewardsFrom(std::vector<Reward>& theRewards)
+	{
+		for (Reward& r : theRewards)
+		{
+			if (r.mPlayer == mPlayer || (r.mPlayer < 0 && r.mTeam == mTeam))
+				GainReward(r);
+			else if (r.mPlayer >= 0 || (r.mTeam >= 0 && r.mTeam < kTeams))
+				mOutRewards.push_back(r);
+		}
+		theRewards.clear();
+	}
+
 	void Side::StepArena()
 	{
 		ArenaContext c;
@@ -285,47 +431,65 @@ namespace Heroes
 		c.mScavenger = mHero.mHero == HERO_SPEEDY;
 		c.mGoldRush = mHero.mHero == HERO_SPEEDY && !Elapsed(mNow, mHero.mGoldRushUntil);
 		c.mGrace = mHero.mHero == HERO_ANGIE;
+		c.mFanClub = mHero.mHero == HERO_MERYL && mHero.mAlive;
 		c.mSuddenDeath = mSuddenDeath;
 		if (c.mOwnerHeroHere)
-		{
-			HeroPresence h;
-			h.mPlayer = mPlayer;
-			h.mTeam = mTeam;
-			h.mPos = mHero.mPos;
-			h.mRadius = mHero.Def().mRadius;
-			h.mTargetable = Elapsed(mNow, mHero.mUntargetableUntil) && Elapsed(mNow, mHero.mImmuneUntil);
-			c.mHeroes.push_back(h);
-		}
-		HeroSnap o;
-		if (OtherHeroIn(mTeam, &o) && (o.mFlags & HF_ALIVE))
-		{
-			HeroPresence h;
-			h.mPlayer = o.mPlayer;
-			h.mTeam = o.mTeam;
-			h.mPos = o.mPos;
-			h.mRadius = HeroDefOf(o.mHero).mRadius;
-			h.mTargetable = !(o.mFlags & (HF_HIDDEN | HF_UNTARGETABLE | HF_IMMUNE));
-			h.mTaunting = (o.mFlags & HF_TAUNT) != 0;
-			h.mHurtMyHeroAt = mHurtByAt[o.mPlayer % kMaxPlayers];
-			c.mHeroes.push_back(h);
-		}
+			c.mHeroes.push_back(MyPresence());
+		HeroPresence o;
+		if (OtherPresence(mTeam, o))
+			c.mHeroes.push_back(o);
 		mArena.Step(mNow, c);
 
 		// Drain what the arena produced.
 		for (auto& h : mArena.mOutHits)
 			Deal(h.first, h.second);
 		mArena.mOutHits.clear();
-		for (Reward& r : mArena.mOutRewards)
-		{
-			if (r.mPlayer == mPlayer || (r.mPlayer < 0 && r.mTeam == mTeam))
-				GainReward(r);
-			else
-				mOutRewards.push_back(r);
-		}
-		mArena.mOutRewards.clear();
+		ApplyRewardsFrom(mArena.mOutRewards);
 		for (Event& e : mArena.mOutEvents)
 			Emit(e);
 		mArena.mOutEvents.clear();
+	}
+
+	void Side::StepTrench()
+	{
+		TrenchContext c;
+		c.mSuddenDeath = mSuddenDeath;
+		if (mHero.mAlive && mHero.mArena == kTrench)
+			c.mHeroes.push_back(MyPresence());
+		HeroPresence o;
+		if (OtherPresence(kTrench, o))
+			c.mHeroes.push_back(o);
+		mTrench.Step(mNow, c);
+		for (auto& h : mTrench.mOutHits)
+			Deal(h.first, h.second);
+		mTrench.mOutHits.clear();
+		ApplyRewardsFrom(mTrench.mOutRewards);
+		for (Event& e : mTrench.mOutEvents)
+			Emit(e);
+		mTrench.mOutEvents.clear();
+		for (int t = 0; t < kTeams; t++)
+			if (!mTrench.mOutArrivals[t].empty())
+			{
+				Arrivals(t, mTrench.mOutArrivals[t]);
+				mTrench.mOutArrivals[t].clear();
+			}
+	}
+
+	// Minions leaving the Trench for team theTeam's tank.
+	void Side::Arrivals(int theTeam, const std::vector<Arrival>& theMinions)
+	{
+		if (theTeam == mTeam)
+		{
+			mArena.SpawnWave(theMinions, 1 - mTeam, mNow);
+			return;
+		}
+		Writer w;
+		w.U8((uint8_t)(1 - theTeam));
+		w.U8((uint8_t)std::min<size_t>(theMinions.size(), 255));
+		for (size_t i = 0; i < theMinions.size() && i < 255; i++)
+			Put(w, theMinions[i]);
+		if (mLink != nullptr)
+			mLink->Send(HM_ARRIVE, w.mData);
 	}
 
 	void Side::StepWaves()
@@ -341,18 +505,31 @@ namespace Heroes
 			aExtra = aMin;
 			aMult *= 1.0f + kSuddenGrowthPerMin * aMin;
 		}
-		Writer w;
-		w.U8((uint8_t)mTeam);
-		w.F32(aMult);
-		std::vector<uint8_t> aKinds(kWaveSize + mWaveSizeRank + aExtra, MIN_MINI);
+		std::vector<Arrival> aWave;
+		int aGrown = (int)(MatchMs() / (kWaveGrowEveryS * 1000));
+		std::vector<uint8_t> aKinds(kWaveSize + mWaveSizeRank + aExtra + aGrown, MIN_MINI);
 		aKinds.insert(aKinds.end(), mQueuedAliens.begin(), mQueuedAliens.end());
 		mQueuedAliens.clear();
-		w.U8((uint8_t)std::min<size_t>(aKinds.size(), 255));
-		for (size_t i = 0; i < aKinds.size() && i < 255; i++)
-			w.U8(aKinds[i]);
+		for (uint8_t k : aKinds)
+		{
+			Arrival a;
+			a.mKind = k;
+			a.mMult = k == MIN_SQUID ? 1.0f : aMult;	// the Squid is the Squid
+			aWave.push_back(a);
+		}
+		mWavesSent++;
+		if (Owns(kTrench))
+		{
+			mTrench.SpawnWave(aWave, mTeam, mNow);
+			return;
+		}
+		Writer w;
+		w.U8((uint8_t)mTeam);
+		w.U8((uint8_t)std::min<size_t>(aWave.size(), 255));
+		for (size_t i = 0; i < aWave.size() && i < 255; i++)
+			Put(w, aWave[i]);
 		if (mLink != nullptr)
 			mLink->Send(HM_WAVE, w.mData);
-		mWavesSent++;
 	}
 
 	void Side::SendState()
@@ -390,7 +567,7 @@ namespace Heroes
 			mLink->Send(HM_EVENTS, w.mData);
 			mOutEvents.erase(mOutEvents.begin(), mOutEvents.begin() + n);
 		}
-		// Every step, stamped with our clock (D34; older copies ignore the stamp).
+		// Every step, stamped with our clock (D34).
 		{
 			mLastHeroSent = mNow;
 			Writer w;
@@ -406,6 +583,20 @@ namespace Heroes
 			Put(w, mArena.Snapshot());
 			w.U32(mNow);
 			mLink->Send(HM_ARENA, w.mData);
+		}
+		if (Owns(kTrench))
+		{
+			// The Trench: every step while the rival's hero is in it (they fight there), else
+			// 3 times a second (their map).
+			uint32_t aTrenchEvery = OtherHeroIn(kTrench) ? 0 : 333;
+			if (Elapsed(mNow, mLastTrenchSent + aTrenchEvery))
+			{
+				mLastTrenchSent = mNow;
+				Writer w;
+				Put(w, mTrench.Snapshot());
+				w.U32(mNow);
+				mLink->Send(HM_ARENA, w.mData);
+			}
 		}
 	}
 
@@ -427,7 +618,7 @@ namespace Heroes
 		case HM_ARENA:
 		{
 			ArenaSnap s;
-			if (Get(r, s) && s.mTeam != mTeam)
+			if (Get(r, s) && !Owns(s.mArena))
 			{
 				int64_t aSentAt = r.Done() ? -1 : (int64_t)r.U32();
 				mOther.AddArena(mNow, s, r.mBad ? -1 : aSentAt);
@@ -450,6 +641,8 @@ namespace Heroes
 				}
 				else if (aRef.mArena == mTeam)
 					mArena.ApplyHit(aRef, h, mNow);
+				else if (aRef.mArena == kTrench && Owns(kTrench))
+					mTrench.ApplyHit(aRef, h, mNow);
 			}
 			break;
 		}
@@ -471,20 +664,32 @@ namespace Heroes
 			{
 				Event e;
 				if (Get(r, e))
+				{
+					if (e.mType == EV_ANNOUNCE && e.mParam == AN_FIRST_BLOOD)
+						mFirstBlood = true;
 					mEffects.push_back({ e, mNow, ++mEffectSeq });
+				}
 			}
 			break;
 		}
 		case HM_WAVE:
+		case HM_ARRIVE:
 		{
 			int aFrom = r.U8();
-			float aMult = r.F32();
 			int n = r.U8();
-			std::vector<uint8_t> aKinds;
+			std::vector<Arrival> aMinions;
 			for (int i = 0; i < n && !r.mBad; i++)
-				aKinds.push_back((uint8_t)std::min<int>(r.U8(), MIN_KIND_COUNT - 1));
-			if (!r.mBad && aFrom != mTeam && !Over())
-				mArena.SpawnWave(aKinds, Clamp(aMult, 0.5f, 10), aFrom, mNow);
+			{
+				Arrival a;
+				if (Get(r, a))
+					aMinions.push_back(a);
+			}
+			if (r.mBad || Over() || aFrom < 0 || aFrom >= kTeams)
+				break;
+			if (p.mType == HM_WAVE && Owns(kTrench) && aFrom != mTeam)
+				mTrench.SpawnWave(aMinions, aFrom, mNow);
+			else if (p.mType == HM_ARRIVE && aFrom != mTeam)
+				mArena.SpawnWave(aMinions, aFrom, mNow);
 			break;
 		}
 		case HM_STATUS:
@@ -517,13 +722,15 @@ namespace Heroes
 	///////////////////////////////////////////////////////////////////////////
 	// Damage, rewards, events
 	///////////////////////////////////////////////////////////////////////////
-	Hit Side::MakeHit(float theDamage, uint8_t theSource) const
+	Hit Side::MakeHit(float theDamage, uint8_t theSource, uint8_t theAbility) const
 	{
 		Hit h;
 		h.mDamage = theDamage;
 		h.mPlayer = (int8_t)mPlayer;
 		h.mTeam = (uint8_t)mTeam;
 		h.mSource = theSource;
+		h.mAbility = theAbility;
+		h.mHero = (uint8_t)mHero.Look();
 		return h;
 	}
 
@@ -536,6 +743,9 @@ namespace Heroes
 				theHit.mDamage *= kHomeDamage;			// home waters
 			if (theTarget.mKind == ENT_FISH)
 				theHit.mDamage *= kHeroVsFish;
+			// Leech Tooth: a little back from abilities too (attacks heal in AttackLanded).
+			if ((theHit.mSource == SRC_ABILITY || theHit.mSource == SRC_ZONE) && theHit.mDamage > 0 && HasItem(ITEM_LEECH_TOOTH) && mHero.mAlive)
+				mHero.mHp = std::min(MaxHp(), mHero.mHp + theHit.mDamage * kAbilityLifesteal);
 		}
 		if (theTarget.mKind == ENT_HERO)
 		{
@@ -545,7 +755,11 @@ namespace Heroes
 			{
 				mOutHits.push_back({ theTarget, theHit });
 				if (theHit.mPlayer == mPlayer)
+				{
 					mHero.mHeroDamage += theHit.mDamage;
+					if (theHit.mDamage > 0)
+						mHitHeroAt = mNow;
+				}
 			}
 			return;
 		}
@@ -553,8 +767,30 @@ namespace Heroes
 			mHero.mStructDamage += theHit.mDamage;
 		if (theTarget.mArena == mTeam)
 			mArena.ApplyHit(theTarget, theHit, mNow);
+		else if (theTarget.mArena == kTrench && Owns(kTrench))
+			mTrench.ApplyHit(theTarget, theHit, mNow);
 		else
 			mOutHits.push_back({ theTarget, theHit });
+	}
+
+	void Side::CheckInk()
+	{
+		HeroState& h = mHero;
+		if (!HasItem(ITEM_INK_SAC) || !h.mAlive || h.mHp > MaxHp() * kInkAtHp || !Elapsed(mNow, h.mInkReadyAt))
+			return;
+		h.mInkReadyAt = mNow + (uint32_t)(kInkCooldownS * 1000);
+		h.mUntargetableUntil = std::max(h.mUntargetableUntil, mNow + (uint32_t)(kInkUntargetableS * 1000));
+		h.mSpeedUntil = mNow + (uint32_t)(kInkSpeedS * 1000);
+		h.mSpeedPct = kInkSpeedPct;
+		Event e;
+		e.mType = EV_ZONE;
+		e.mArena = (uint8_t)h.mArena;
+		e.mA = h.mPos;
+		e.mValue = 90;
+		e.mMs = 1200;
+		e.mParam = LOOK_INK;
+		Emit(e);
+		Sound(h.mArena, SND_BIG_SPLASH, h.mPos);
 	}
 
 	void Side::ApplyToMyHero(const Hit& theHit)
@@ -569,12 +805,22 @@ namespace Heroes
 			h.mShield = std::max(h.mShield, theHit.mShield);
 			h.mShieldUntil = mNow + theHit.mShieldMs;
 		}
+		if (theHit.mCleanse)
+		{
+			h.mStunUntil = h.mSleepUntil = h.mSlowUntil = 0;
+		}
 		if (theHit.mTeam == mTeam)
 			return;								// no friendly fire
 		if (!Elapsed(mNow, h.mImmuneUntil) || !Elapsed(mNow, h.mUntargetableUntil))
 		{
 			if (theHit.mDamage > 0)
 				Text(h.mArena, h.mPos - Vec(0, 50), "Immune", TC_INFO);
+			// Spiked Shell: hitting Rhubarb in his shell hurts.
+			if (theHit.mPlayer >= 0 && theHit.mDamage > 0 && !Elapsed(mNow, h.mSpikedUntil))
+			{
+				Hit s = MakeHit(40, SRC_ABILITY, AB_E);
+				Deal(EntityRef::Hero(theHit.mPlayer), s);
+			}
 			return;
 		}
 		if (Hopping() && (theHit.mSource == SRC_MINION || (theHit.mSource == SRC_ZONE && theHit.mSlowMs > 0)))
@@ -585,8 +831,20 @@ namespace Heroes
 		}
 		if (theHit.mPlayer >= 0)
 			mHurtByAt[theHit.mPlayer % kMaxPlayers] = mNow;
+		// Niko's Clam Shield: the first hero to hit him is stunned.
+		if (h.mClamStun && !Elapsed(mNow, h.mClamUntil) && theHit.mPlayer >= 0 && theHit.mDamage > 0)
+		{
+			h.mClamStun = false;
+			Hit s = MakeHit(0, SRC_ABILITY, AB_W);
+			s.mStunMs = (uint16_t)(h.Def().mAb[AB_W].mExtra * 1000);
+			Deal(EntityRef::Hero(theHit.mPlayer), s);
+			Burst(h.mArena, h.mPos, 60, LOOK_PEARL);
+			Sound(h.mArena, SND_CLAM_CLOSE, h.mPos);
+		}
 		if (theHit.mStunMs > 0)
 			h.mStunUntil = std::max(h.mStunUntil, mNow + theHit.mStunMs);
+		if (theHit.mSleepMs > 0)
+			h.mSleepUntil = std::max(h.mSleepUntil, mNow + theHit.mSleepMs);
 		if (theHit.mSlowMs > 0)
 		{
 			// The strongest slow still running wins.
@@ -595,22 +853,33 @@ namespace Heroes
 			h.mSlowUntil = std::max(h.mSlowUntil, mNow + theHit.mSlowMs);
 		}
 		const HeroDef& d = h.Def();
-		if (theHit.mPull)
-			h.mPos = d.mWalker ? WalkerPos(theHit.mPullTo.x, d.mRadius) : NearestOpen(theHit.mPullTo);
-		if (theHit.mPush.x != 0 || theHit.mPush.y != 0)
+		if (!Rooted())
 		{
-			Vec p = h.mPos + theHit.mPush;
-			h.mPos = d.mWalker ? WalkerPos(p.x, d.mRadius) : NearestOpen(p);
+			if (theHit.mPull)
+				h.mPos = d.mWalker ? WalkerPos(h.mArena, theHit.mPullTo.x, d.mRadius) : NearestOpen(h.mArena, theHit.mPullTo);
+			if (theHit.mPush.x != 0 || theHit.mPush.y != 0)
+			{
+				Vec p = h.mPos + theHit.mPush;
+				h.mPos = d.mWalker ? WalkerPos(h.mArena, p.x, d.mRadius) : NearestOpen(h.mArena, p);
+			}
+			if (theHit.mPull || theHit.mPush.x != 0 || theHit.mPush.y != 0)
+				h.mPath.clear();
 		}
-		if (theHit.mPull || theHit.mPush.x != 0 || theHit.mPush.y != 0)
-			h.mPath.clear();
-		float aDamage = theHit.mDamage;
+		float aDamage = theHit.mDamage + theHit.mMaxHpPct * MaxHp();
 		if (aDamage <= 0)
 			return;
 		if (theHit.mSource == SRC_TOWER || theHit.mSource == SRC_LASER)
 			aDamage *= ArmorVsStructures();
+		else if ((theHit.mSource == SRC_MINION || theHit.mSource == SRC_MONSTER) && HasItem(ITEM_CORAL_ARMOR))
+			aDamage *= 1 - ItemDefOf(ITEM_CORAL_ARMOR).mArmorPct;
 		if (h.mArena == mTeam)
 			aDamage *= kHomeArmor;						// home waters
+		if (!Elapsed(mNow, h.mClamUntil))
+			aDamage *= 1 - h.Def().mAb[AB_W].mDamage;	// Clam Shield (Niko's, or a copy's)
+		if (Rooted())
+			aDamage *= 0.55f;							// Fortress
+		else if (h.Look() == HERO_NIKO && Elapsed(mNow, h.mLastMoveAt + 400))
+			aDamage *= 0.8f;							// Hard Shell
 		if (h.mShield > 0)
 		{
 			float a = std::min(h.mShield, aDamage);
@@ -618,15 +887,32 @@ namespace Heroes
 			aDamage -= a;
 		}
 		h.mHp -= aDamage;
+		h.mLastHurtAt = mNow;
+		h.mSleepUntil = theHit.mSleepMs > 0 ? h.mSleepUntil : 0;	// damage wakes you
 		if (aDamage >= 1)
 			Text(h.mArena, h.mPos - Vec(0, 46), std::to_string((int)std::lround(aDamage)), TC_DAMAGE);
+		// The death recap: the last 10 s.
+		RecapHit rh;
+		rh.mAt = mNow;
+		rh.mSource = theHit.mSource;
+		rh.mPlayer = theHit.mPlayer;
+		rh.mHero = theHit.mHero;
+		rh.mAbility = theHit.mAbility;
+		rh.mDamage = aDamage;
+		mRecap.push_back(rh);
+		while (!mRecap.empty() && Elapsed(mNow, mRecap.front().mAt + 10000))
+			mRecap.erase(mRecap.begin());
 		if (h.mHp <= 0)
 			Die(theHit);
+		else
+			CheckInk();
 	}
 
 	void Side::Die(const Hit& theKiller)
 	{
 		HeroState& h = mHero;
+		if (h.mCopyHero >= 0)
+			EndCopy();
 		h.mHp = 0;
 		h.mAlive = false;
 		h.mDeaths++;
@@ -634,14 +920,19 @@ namespace Heroes
 		h.mOrder = HeroState::ORD_IDLE;
 		h.mPath.clear();
 		h.mStormUntil = h.mSlimeUntil = h.mHealUntil = h.mDashUntil = h.mLeapUntil = h.mHopUntil = 0;
+		h.mFortressUntil = h.mAnthemUntil = h.mDecoyUntil = h.mClamUntil = 0;
 		h.mThunderLeft = 0;
+		h.mBuffUntil[BUFF_GUS] = h.mBuffUntil[BUFF_BALROG] = 0;	// camp buffs end; the Boss's surge stays
+		// The bounty: more for ending a streak (a shutdown).
+		int aShutdown = h.mStreak >= kShutdownStreak ? std::min(kShutdownMax, kShutdownPerKill * h.mStreak) : 0;
 		Reward r;
 		r.mPlayer = theKiller.mPlayer;
 		r.mTeam = (int8_t)theKiller.mTeam;
 		r.mXp = kXpHeroKill + kXpHeroKillPerLevel * h.mLevel;
-		r.mMoney = kBountyHeroKill + kBountyHeroKillPerLevel * h.mLevel;
+		r.mMoney = kBountyHeroKill + kBountyHeroKillPerLevel * h.mLevel + aShutdown;
 		r.mWhat = ENT_HERO;
-		mOutRewards.push_back(r);
+		if (theKiller.mTeam < kTeams)
+			mOutRewards.push_back(r);
 		Event e;
 		e.mType = EV_KILL;
 		e.mArena = (uint8_t)h.mArena;
@@ -652,6 +943,38 @@ namespace Heroes
 		e.mParam = theKiller.mSource;
 		Emit(e);
 		Sound(h.mArena, SND_DIE, h.mPos);
+		// Banners: first blood, the killer's streak, a shutdown.
+		if (theKiller.mPlayer >= 0 && theKiller.mTeam != mTeam)
+		{
+			if (!mFirstBlood)
+			{
+				mFirstBlood = true;
+				Announce(AN_FIRST_BLOOD, theKiller.mPlayer, mPlayer);
+			}
+			if (aShutdown > 0)
+				Announce(AN_SHUTDOWN, theKiller.mPlayer, mPlayer, (float)aShutdown);
+			const HeroSnap* o = OtherHero();
+			int aStreak = (o != nullptr ? o->mStreak : 0) + 1;
+			if (aStreak == 3) Announce(AN_SPREE, theKiller.mPlayer, mPlayer, (float)aStreak);
+			else if (aStreak == 5) Announce(AN_RAMPAGE, theKiller.mPlayer, mPlayer, (float)aStreak);
+			else if (aStreak == 7) Announce(AN_UNSTOPPABLE, theKiller.mPlayer, mPlayer, (float)aStreak);
+			else if (aStreak >= 9 && aStreak % 2 == 1) Announce(AN_GODLIKE, theKiller.mPlayer, mPlayer, (float)aStreak);
+		}
+		h.mStreak = 0;
+		// Shrapnel's Volatile: he goes out with a bang.
+		if (h.mHero == HERO_SHRAPNEL)
+		{
+			Impact im;
+			im.mArena = h.mArena;
+			im.mPos = h.mPos;
+			im.mAt = mNow;
+			im.mRadius = 160;
+			im.mHit = MakeHit(150, SRC_ABILITY);
+			im.mLook = LOOK_BOMB;
+			im.mSound = SND_BOOM;
+			mImpacts.push_back(im);
+		}
+		mBurns.clear();
 	}
 
 	void Side::Respawn()
@@ -663,34 +986,63 @@ namespace Heroes
 		h.mPos = SpawnPoint();
 		h.mOrder = HeroState::ORD_IDLE;
 		h.mPath.clear();
-		h.mStunUntil = h.mSlowUntil = h.mUntargetableUntil = h.mImmuneUntil = h.mSpeedUntil = h.mTauntUntil = 0;
+		h.mAutoTarget = EntityRef();
+		h.mStunUntil = h.mSleepUntil = h.mSlowUntil = h.mUntargetableUntil = h.mImmuneUntil = h.mSpeedUntil = h.mTauntUntil = 0;
 		h.mShield = 0;
 		h.mInPortal = false;
 		h.mStacks = 0;
-		Event e;
-		e.mType = EV_BURST;
-		e.mArena = (uint8_t)mTeam;
-		e.mA = h.mPos;
-		e.mValue = 60;
-		e.mParam = LOOK_HALO;
-		Emit(e);
+		mRecap.clear();
+		Burst(mTeam, h.mPos, 60, LOOK_HALO);
+	}
+
+	void Side::StartBuff(int theBuff)
+	{
+		HeroState& h = mHero;
+		if (theBuff == BUFF_SQUID)
+		{
+			mQueuedAliens.push_back(MIN_SQUID);
+			Text(h.mArena, h.mPos - Vec(0, 84), "The Squid joins your next wave!", TC_XP);
+			return;
+		}
+		if (theBuff < 0 || theBuff >= BUFF_COUNT)
+			return;
+		float aOldMax = MaxHp();
+		h.mBuffUntil[theBuff] = mNow + (uint32_t)(kBuffS[theBuff] * 1000);
+		if (h.mAlive)
+			h.mHp += std::max(0.0f, MaxHp() - aOldMax);
+		static const char* kName[BUFF_COUNT] = { "Gus's might!", "Balrog's fire!", "THE BOSS'S POWER!" };
+		Text(h.mArena, h.mPos - Vec(0, 84), kName[theBuff], TC_XP);
+		Burst(h.mArena, h.mPos, theBuff == BUFF_BOSS ? 140 : 80, theBuff == BUFF_BOSS ? LOOK_BOSS : (theBuff == BUFF_BALROG ? LOOK_BURN : LOOK_GOLD));
 	}
 
 	void Side::GainReward(const Reward& r)
 	{
 		GainXp(r.mXp);
-		if (r.mMoney > 0)
+		int aMoney = r.mMoney;
+		if (r.mWhat == ENT_COIN && HasItem(ITEM_GOLDEN_SCALE))
+			aMoney = (int)std::lround(aMoney * (1 + kGoldenCoinBonus));
+		if (aMoney > 0)
 		{
-			mArena.Earn(r.mMoney, Vec(), false);
+			mArena.Earn(aMoney, Vec(), false);
 			if (mHero.mAlive)
-				Text(mHero.mArena, mHero.mPos - Vec(0, 64), "+$" + std::to_string(r.mMoney), TC_MONEY);
+				Text(mHero.mArena, mHero.mPos - Vec(0, 64), "+$" + std::to_string(aMoney), TC_MONEY);
 		}
 		if (r.mWhat == ENT_HERO)
+		{
 			mHero.mKills++;
+			mHero.mStreak++;
+		}
 		else if (r.mWhat == ENT_MINION)
 			mHero.mMinionKills++;
 		else if (r.mWhat == ENT_TOWER)
 			mHero.mTowers++;
+		else if (r.mWhat == ENT_COIN)
+			mHero.mLaneCoins += aMoney;
+		if (r.mBuff != 255)
+		{
+			mHero.mObjectives++;
+			StartBuff(r.mBuff);
+		}
 	}
 
 	void Side::GainXp(float theXp)
@@ -704,14 +1056,23 @@ namespace Heroes
 			h.mXp -= XpForLevel(h.mLevel);
 			float aOldMax = MaxHp();
 			h.mLevel++;
-			h.mHp += MaxHp() - aOldMax;
+			// Abilities rank up on their own (D36), in the hero's order.
+			const HeroDef& d = HeroDefOf(h.mHero);
+			int s = d.mRankOrder[std::clamp(h.mLevel - 2, 0, 8)];
+			if (h.mRank[s] < kMaxRank)
+				h.mRank[s]++;
+			else
+				for (int k = AB_Q; k <= AB_E; k++)
+					if (h.mRank[k] < kMaxRank)
+					{
+						h.mRank[k]++;
+						break;
+					}
 			if (h.mLevel == kUltLevel)
 				h.mRank[AB_R] = 1;
 			else if (h.mLevel == kUlt2Level)
 				h.mRank[AB_R] = 2;
-			if (h.mPoints == 0)
-				h.mPointAt = mNow;
-			h.mPoints++;
+			h.mHp += MaxHp() - aOldMax;
 			Event e;
 			e.mType = EV_LEVEL_UP;
 			e.mArena = (uint8_t)h.mArena;
@@ -720,26 +1081,27 @@ namespace Heroes
 			e.mValue = (float)h.mLevel;
 			Emit(e);
 			Sound(h.mArena, SND_LEVEL, h.mPos);
+			if (h.mLevel == kEvolveLevel)
+			{
+				// The pet evolves.
+				Burst(h.mArena, h.mPos, 150, LOOK_EVOLVE);
+				Sound(h.mArena, SND_EVOLVE, h.mPos);
+				Announce(AN_EVOLVE, mPlayer, -1, (float)h.mHero);
+			}
 		}
 		if (h.mLevel >= kMaxLevel)
 			h.mXp = 0;
-	}
-
-	bool Side::SpendPoint(int theSlot)
-	{
-		HeroState& h = mHero;
-		if (theSlot < AB_Q || theSlot > AB_E || h.mPoints <= 0 || h.mRank[theSlot] >= kMaxRank)
-			return false;
-		h.mRank[theSlot]++;
-		h.mPoints--;
-		h.mPointAt = mNow;
-		return true;
 	}
 
 	void Side::Emit(const Event& e)
 	{
 		mEffects.push_back({ e, mNow, ++mEffectSeq });
 		mOutEvents.push_back(e);
+	}
+
+	void Side::Local(const Event& e)
+	{
+		mEffects.push_back({ e, mNow, ++mEffectSeq });
 	}
 
 	void Side::Text(int theArena, Vec theAt, const std::string& theText, uint8_t theColor)
@@ -763,6 +1125,29 @@ namespace Heroes
 		Emit(e);
 	}
 
+	void Side::Burst(int theArena, Vec theAt, float theRadius, uint8_t theLook)
+	{
+		Event e;
+		e.mType = EV_BURST;
+		e.mArena = (uint8_t)theArena;
+		e.mA = theAt;
+		e.mValue = theRadius;
+		e.mParam = theLook;
+		Emit(e);
+	}
+
+	void Side::Announce(uint8_t theKind, int thePlayer, int theOther, float theValue)
+	{
+		Event e;
+		e.mType = EV_ANNOUNCE;
+		e.mArena = (uint8_t)mHero.mArena;
+		e.mParam = theKind;
+		e.mPlayer = (int8_t)thePlayer;
+		e.mId = (uint32_t)(theOther < 0 ? 255 : theOther);
+		e.mValue = theValue;
+		Emit(e);
+	}
+
 	///////////////////////////////////////////////////////////////////////////
 	// What's around
 	///////////////////////////////////////////////////////////////////////////
@@ -781,18 +1166,47 @@ namespace Heroes
 		return true;
 	}
 
+	const ArenaSnap* Side::LatestArena(int theArena) const { return mOther.LatestArena(theArena); }
+
 	bool Side::ArenaHasOpenCore(int theArena) const
 	{
+		if (!IsTank(theArena))
+			return false;
 		if (theArena == mTeam)
 			return mArena.CoreOpen();
-		const ArenaSnap* s = mOther.LatestArena();
+		const ArenaSnap* s = mOther.LatestArena(theArena);
 		return s != nullptr && s->mTowerHp[0] <= 0 && s->mTowerHp[1] <= 0;
+	}
+
+	uint32_t Side::MonsterIn(int theSlot) const
+	{
+		if (Owns(kTrench))
+			return mTrench.MonsterIn(theSlot, mNow);
+		const ArenaSnap* s = mOther.LatestArena(kTrench);
+		return s != nullptr ? s->mMonsterIn[theSlot] * 1000u : (uint32_t)(kMonsterFirstS[theSlot] * 1000);
+	}
+
+	bool Side::MonsterAlive(int theSlot, Vec* thePos, float* theHpFrac) const
+	{
+		static const uint8_t kKind[MON_COUNT] = { MIN_CAMP_GUS, MIN_CAMP_BALROG, MIN_PSYCHO, MIN_BOSS };
+		auto Found = [&](Vec p, float f) { if (thePos) *thePos = p; if (theHpFrac) *theHpFrac = f; return true; };
+		if (Owns(kTrench))
+		{
+			const Minion* m = mTrench.Monster(theSlot);
+			return m != nullptr && Found(m->mPos, m->mHp / std::max(1.0f, m->mMaxHp));
+		}
+		const ArenaSnap* s = mOther.LatestArena(kTrench);
+		if (s != nullptr)
+			for (const MinionSnap& m : s->mMinions)
+				if (m.mKind == kKind[theSlot] && m.mTeam == kNeutralTeam)
+					return Found(m.mPos, m.mHpFrac);
+		return false;
 	}
 
 	void Side::Targets(int theArena, std::vector<Target>& theOut, bool theAsDrawn) const
 	{
 		theOut.clear();
-		const MapDef& aMap = TheMap();
+		const MapDef& aMap = MapOf(theArena);
 		auto AddHero = [&](const HeroSnap& s) {
 			if (!(s.mFlags & HF_ALIVE) || (s.mFlags & (HF_UNTARGETABLE)))
 				return;
@@ -805,13 +1219,16 @@ namespace Heroes
 			t.mTeam = s.mTeam;
 			t.mHpFrac = s.mHp / std::max(1.0f, s.mMaxHp);
 			t.mHero = true;
+			t.mAsleep = (s.mFlags & HF_ASLEEP) != 0;
 			theOut.push_back(t);
 		};
 		ArenaSnap s;
-		if (theAsDrawn || theArena == mTeam)
+		if (theAsDrawn || Owns(theArena))
 			s = ViewArena(theArena);
-		else if (const ArenaSnap* aLatest = mOther.LatestArena())
+		else if (const ArenaSnap* aLatest = mOther.LatestArena(theArena))
 			s = *aLatest;
+		else
+			s.mArena = (uint8_t)theArena;
 		for (const FishSnap& f : s.mFish)
 		{
 			if (f.mFlags & FF_DYING)
@@ -831,30 +1248,37 @@ namespace Heroes
 			t.mRadius = MinionDefOf(m.mKind).mRadius;
 			t.mTeam = m.mTeam;
 			t.mHpFrac = m.mHpFrac;
+			t.mMonster = m.mTeam == kNeutralTeam;
+			t.mAngry = (m.mFlags & MF_ANGRY) != 0;
+			t.mAsleep = (m.mFlags & MF_ASLEEP) != 0;
+			t.mKind = m.mKind;
 			theOut.push_back(t);
 		}
-		for (int i = 0; i < 2; i++)
-			if (s.mTowerHp[i] > 0)
+		if (IsTank(theArena))
+		{
+			for (int i = 0; i < 2; i++)
+				if (s.mTowerHp[i] > 0)
+				{
+					Target t;
+					t.mRef = EntityRef::Of(theArena, ENT_TOWER, (uint32_t)i);
+					t.mPos = aMap.mTower[i];
+					t.mRadius = kTowerR;
+					t.mTeam = theArena;
+					t.mHpFrac = s.mTowerHp[i] / kTowerHealth;
+					t.mStructure = true;
+					theOut.push_back(t);
+				}
+			if (s.mCoreHp > 0)
 			{
 				Target t;
-				t.mRef = EntityRef::Of(theArena, ENT_TOWER, (uint32_t)i);
-				t.mPos = aMap.mTower[i];
-				t.mRadius = kTowerR;
+				t.mRef = EntityRef::Of(theArena, ENT_CORE, 0);
+				t.mPos = aMap.mCore;
+				t.mRadius = kCoreR;
 				t.mTeam = theArena;
-				t.mHpFrac = s.mTowerHp[i] / kTowerHealth;
+				t.mHpFrac = s.mCoreHp / kCoreHealth;
 				t.mStructure = true;
 				theOut.push_back(t);
 			}
-		if (s.mCoreHp > 0)
-		{
-			Target t;
-			t.mRef = EntityRef::Of(theArena, ENT_CORE, 0);
-			t.mPos = aMap.mCore;
-			t.mRadius = kCoreR;
-			t.mTeam = theArena;
-			t.mHpFrac = s.mCoreHp / kCoreHealth;
-			t.mStructure = true;
-			theOut.push_back(t);
 		}
 		if (mHero.mArena == theArena)
 			AddHero(MySnap());
@@ -878,7 +1302,7 @@ namespace Heroes
 		return false;
 	}
 
-	void Side::EnemiesNear(int theArena, Vec thePos, float theRadius, std::vector<Target>& theOut, bool theStructures) const
+	void Side::EnemiesNear(int theArena, Vec thePos, float theRadius, std::vector<Target>& theOut, bool theStructures, bool theMonsters) const
 	{
 		std::vector<Target> v;
 		Targets(theArena, v);
@@ -887,6 +1311,8 @@ namespace Heroes
 		for (const Target& t : v)
 		{
 			if (t.mTeam == mTeam)
+				continue;
+			if (t.mMonster && !theMonsters)
 				continue;
 			if (t.mStructure && (!theStructures || (t.mRef.mKind == ENT_CORE && !aOpen)))
 				continue;
@@ -901,13 +1327,15 @@ namespace Heroes
 		HeroSnap s;
 		s.mPlayer = (uint8_t)mPlayer;
 		s.mTeam = (uint8_t)mTeam;
-		s.mHero = h.mHero;
+		s.mHero = (uint8_t)h.Look();
+		s.mBaseHero = h.mHero;
 		s.mArena = (uint8_t)h.mArena;
-		uint16_t f = 0;
+		uint32_t f = 0;
 		if (h.mAlive) f |= HF_ALIVE;
-		if (h.mHidden) f |= HF_HIDDEN;
+		if (h.mHidden || !Elapsed(mNow, h.mDecoyUntil)) f |= HF_HIDDEN;
 		if (!Elapsed(mNow, h.mUntargetableUntil)) f |= HF_UNTARGETABLE;
 		if (!Elapsed(mNow, h.mStunUntil)) f |= HF_STUNNED;
+		if (!Elapsed(mNow, h.mSleepUntil)) f |= HF_ASLEEP;
 		if (!Elapsed(mNow, h.mImmuneUntil)) f |= HF_IMMUNE;
 		if (h.mRight) f |= HF_RIGHT;
 		if (!Elapsed(mNow, h.mAttackingUntil)) f |= HF_ATTACKING;
@@ -917,6 +1345,12 @@ namespace Heroes
 		if (!Elapsed(mNow, h.mGoldRushUntil)) f |= HF_GOLDRUSH;
 		if (!Elapsed(mNow, h.mTauntUntil)) f |= HF_TAUNT;
 		if (!Elapsed(mNow, h.mSpeedUntil)) f |= HF_SPEED;
+		if (h.mCopyHero >= 0) f |= HF_COPY;
+		if (Rooted()) f |= HF_FORTRESS;
+		if (!Elapsed(mNow, h.mAnthemUntil)) f |= HF_ANTHEM;
+		if (!Elapsed(mNow, h.mClamUntil)) f |= HF_CLAM;
+		if (h.mInkReadyAt != 0 && !Elapsed(mNow, h.mInkReadyAt - (uint32_t)((kInkCooldownS - kInkSpeedS) * 1000))) f |= HF_INK;
+		if (HasBuff(BUFF_BALROG)) f |= HF_BURNING;
 		s.mFlags = f;
 		s.mPos = h.mPos;
 		s.mHp = h.mHp;
@@ -926,11 +1360,22 @@ namespace Heroes
 		s.mRespawnMs = h.mAlive ? 0 : (uint16_t)std::min<uint32_t>(65000, Elapsed(mNow, h.mRespawnAt) ? 0 : h.mRespawnAt - mNow);
 		s.mKills = (uint16_t)h.mKills;
 		s.mDeaths = (uint16_t)h.mDeaths;
+		s.mStreak = (uint8_t)std::min(255, h.mStreak);
+		uint8_t aTalents = 0;
+		for (int t = 0; t < kTalentTiers; t++)
+			aTalents |= (uint8_t)((h.mTalent[t] + 1) << (2 * t));
+		s.mTalents = aTalents;
+		for (int b = 0; b < BUFF_COUNT; b++)
+			s.mBuffS[b] = HasBuff(b) ? (uint8_t)std::min<uint32_t>(255, (h.mBuffUntil[b] - mNow + 999) / 1000) : 0;
 		for (int i = 0; i < kItemSlots; i++)
 			s.mItems[i] = h.mItems[i];
 		s.mFishLost = (uint16_t)std::min(65535, mArena.mFishLost);
 		s.mTowers = (uint16_t)h.mTowers;
 		s.mEarned = (uint32_t)std::max(0, mArena.mMoneyEarned);
+		s.mStructDamage = (uint32_t)std::max(0.0f, h.mStructDamage);
+		s.mLaneCoins = (uint16_t)std::min(65535, h.mLaneCoins);
+		s.mMinionKills = (uint16_t)std::min(65535, h.mMinionKills);
+		s.mObjectives = (uint8_t)std::min(255, h.mObjectives);
 		return s;
 	}
 
@@ -938,7 +1383,9 @@ namespace Heroes
 	{
 		if (theArena == mTeam)
 			return mArena.Snapshot();
-		return mOther.ArenaAt(mNow - mOther.DelayMs());
+		if (theArena == kTrench && Owns(kTrench))
+			return mTrench.Snapshot();
+		return mOther.ArenaAt(theArena, mNow - mOther.DelayMs());
 	}
 
 	void Side::ViewHeroes(int theArena, std::vector<HeroSnap>& theOut) const
@@ -1003,15 +1450,28 @@ namespace Heroes
 		}
 		default:
 			if (theShop >= SHOP_ITEM_FIRST && theShop <= SHOP_ITEM_LAST)
-			{
-				int n = 0;
-				for (uint8_t i : mHero.mItems)
-					if (i == theShop - SHOP_ITEM_FIRST)
-						n++;
-				return n;
-			}
+				return ItemCount(theShop - SHOP_ITEM_FIRST);
 			return 0;
 		}
+	}
+
+	int Side::SuggestedItem() const
+	{
+		// The build in order; an item counts once per time it appears in the build.
+		const HeroDef& d = HeroDefOf(mHero.mHero);
+		int aHave[ITEM_COUNT] = {};
+		for (uint8_t i : mHero.mItems)
+			if (i != ITEM_NONE && i < ITEM_COUNT)
+				aHave[i]++;
+		for (int k = 0; k < kItemSlots; k++)
+		{
+			int i = d.mBuild[k];
+			if (aHave[i] > 0)
+				aHave[i]--;
+			else
+				return i;
+		}
+		return ITEM_NONE;
 	}
 
 	bool Side::CanBuy(int theShop, std::string* theWhy) const
@@ -1092,7 +1552,7 @@ namespace Heroes
 			h.mHeal = kTowerRepair;
 			int i = theShop == SHOP_REPAIR_LEFT ? 0 : 1;
 			a.ApplyHit(EntityRef::Of(mTeam, ENT_TOWER, (uint32_t)i), h, mNow);
-			Text(mTeam, TheMap().mTower[i] - Vec(0, 90), "+" + std::to_string((int)kTowerRepair), TC_HEAL);
+			Text(mTeam, TankMap().mTower[i] - Vec(0, 90), "+" + std::to_string((int)kTowerRepair), TC_HEAL);
 			break;
 		}
 		case SHOP_TOWER_UPGRADE: a.mTowerLevel++; break;
@@ -1120,23 +1580,28 @@ namespace Heroes
 		return true;
 	}
 
-	Arena::ClickKind Side::HomeClick(Vec theWhere)
+	Arena::ClickKind Side::HomeClick(Vec theWhere, float theCoinReach)
 	{
 		if (Over())
 			return Arena::CLICK_NONE;
+		// The home window draws coins small: let a click there reach a little farther.
+		if (theCoinReach > kCoinClickR)
+		{
+			float aBest = theCoinReach;
+			Vec aAt = theWhere;
+			for (const Coin& c : mArena.mCoins)
+				if (Dist(c.mPos, theWhere) < aBest)
+				{
+					aBest = Dist(c.mPos, theWhere);
+					aAt = c.mPos;
+				}
+			theWhere = aAt;
+		}
 		ArenaContext c;
 		c.mOwnerPlayer = mPlayer;
-		HeroSnap o;
-		if (OtherHeroIn(mTeam, &o) && (o.mFlags & HF_ALIVE))
-		{
-			HeroPresence h;
-			h.mPlayer = o.mPlayer;
-			h.mTeam = o.mTeam;
-			h.mPos = o.mPos;
-			h.mRadius = HeroDefOf(o.mHero).mRadius;
-			h.mTargetable = !(o.mFlags & (HF_HIDDEN | HF_UNTARGETABLE | HF_IMMUNE));
-			c.mHeroes.push_back(h);
-		}
+		HeroPresence o;
+		if (OtherPresence(mTeam, o))
+			c.mHeroes.push_back(o);
 		Arena::ClickKind k = mArena.Click(theWhere, mNow, c);
 		for (auto& h : mArena.mOutHits)
 			Deal(h.first, h.second);

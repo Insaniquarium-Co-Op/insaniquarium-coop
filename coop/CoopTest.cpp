@@ -492,7 +492,8 @@ namespace Coop
 				}
 			}
 			// Pet Heroes: heroespractice | heroespick <hero> | heroesbot 0/1 | heroesspeed <n> |
-			// heroesstate [label] | heroesgiveup
+			// heroesstate [label] | heroesgiveup | heroestutorial | heroeswarp <arena> |
+			// heroeslevel <n> | heroesaim <slot> | heroesskill <0-2>
 			else if (s.mVerb == "heroespractice")
 				HeroesOpenPractice();
 			else if (s.mVerb == "heroespick")
@@ -511,6 +512,16 @@ namespace Coop
 				HeroesHostStart();
 			else if (s.mVerb == "heroeslock")
 				fprintf(stderr, "[test] heroeslock %s -> %d\n", s.mArg.c_str(), HeroesTestLock(atoi(s.mArg.c_str())) ? 1 : 0);
+			else if (s.mVerb == "heroestutorial")
+				HeroesTestTutorial();
+			else if (s.mVerb == "heroeswarp")
+				HeroesTestWarp(atoi(s.mArg.c_str()));
+			else if (s.mVerb == "heroeslevel")
+				HeroesTestLevel(atoi(s.mArg.c_str()));
+			else if (s.mVerb == "heroesaim")
+				HeroesTestAim(atoi(s.mArg.c_str()));
+			else if (s.mVerb == "heroesskill")
+				HeroesTestBotSkill(atoi(s.mArg.c_str()));
 			else if (s.mVerb == "quitwhenidle")
 				gQuitWhenIdle = true;
 			else if (s.mVerb == "keeperbot")

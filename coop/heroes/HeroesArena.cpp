@@ -14,7 +14,7 @@ namespace Heroes
 		mTeam = theTeam;
 		mRng.Seed(theSeed);
 		mLastStep = theNow;
-		mCollectorPos = WalkerPos(TheMap().mCore.x + 160, kCollectorRadius);
+		mCollectorPos = WalkerPos(mTeam, TankMap().mCore.x + 160, kCollectorRadius);
 		for (int i = 0; i < kStartGuppies; i++)
 			AddFish(FISH_GUPPY, theNow, Vec(520 + 240.0f * i, 560));
 	}
@@ -39,7 +39,7 @@ namespace Heroes
 		f.mSize = (uint8_t)(theKind == FISH_GUPPY ? theSize : SIZE_SMALL);
 		if (theKind == FISH_GUPPY)
 			f.mMeals = theSize == SIZE_LARGE ? kGuppyMealsLarge : (theSize == SIZE_MEDIUM ? kGuppyMealsMedium : 0);
-		f.mPos = ClampToWater(thePos, f.Radius());
+		f.mPos = ClampToWater(mTeam, thePos, f.Radius());
 		f.mTarget = f.mPos;
 		f.mHp = kFishHp[theKind][f.mSize];
 		f.mHungryAt = theNow + (uint32_t)(d.mHungryAfterS * 1000);
@@ -259,7 +259,7 @@ namespace Heroes
 					Vec aAway = Norm(f.mPos - hp.mPos);
 					if (aAway.x == 0 && aAway.y == 0)
 						aAway = Vec(1, 0);
-					f.mTarget = ClampToWater(f.mPos + aAway * 160, r);
+					f.mTarget = ClampToWater(mTeam, f.mPos + aAway * 160, r);
 					f.mNextWander = theNow + 800;
 					aChasing = true;
 					aSpeed = d.mSpeed * 1.8f;
@@ -269,14 +269,14 @@ namespace Heroes
 			{
 				if (Elapsed(theNow, f.mNextWander) || Dist(f.mTarget, f.mPos) < 8)
 				{
-					f.mTarget = ClampToWater(Vec(mRng.Range(60, kWorldW - 60), mRng.Range(kSurfaceY + 60, 740)), r);
+					f.mTarget = ClampToWater(mTeam, Vec(mRng.Range(60, kWorldW - 60), mRng.Range(kSurfaceY + 60, 740)), r);
 					f.mNextWander = theNow + 3000 + mRng.Int(3000);
 				}
 				aSpeed *= 0.6f;
 			}
 			Vec aOld = f.mPos;
 			StepToward(f.mPos, f.mTarget, aSpeed * theDt);
-			f.mPos = ClampToWater(f.mPos, r);
+			f.mPos = ClampToWater(mTeam, f.mPos, r);
 			if (std::fabs(f.mPos.x - aOld.x) > 0.05f)
 				f.mRight = f.mPos.x > aOld.x;
 
@@ -288,13 +288,13 @@ namespace Heroes
 				{
 					for (int k = 0; k < aDrops; k++)
 						DropCoin(f.mSize == SIZE_LARGE ? COIN_GOLD : COIN_SILVER, f.mPos + Vec(k * 14.0f, 0));
-					f.mNextCoin = theNow + (uint32_t)((kCoinEveryS + mRng.Range(-1.5f, 1.5f)) * 1000);
+					f.mNextCoin = theNow + (uint32_t)((kCoinEveryS + mRng.Range(-1.5f, 1.5f)) * (theCtx.mFanClub ? 1 - kFanClubFaster : 1.0f) * 1000);
 				}
 				else if (f.mKind == FISH_CARNIVORE && Elapsed(theNow, f.mNextCoin))
 				{
 					for (int k = 0; k < aDrops; k++)
 						DropCoin(COIN_DIAMOND, f.mPos + Vec(k * 14.0f, 0));
-					f.mNextCoin = theNow + (uint32_t)((kDiamondEveryS + mRng.Range(-2, 2)) * 1000);
+					f.mNextCoin = theNow + (uint32_t)((kDiamondEveryS + mRng.Range(-2, 2)) * (theCtx.mFanClub ? 1 - kFanClubFaster : 1.0f) * 1000);
 				}
 				else if (f.mKind == FISH_BREEDER && Elapsed(theNow, f.mNextBreed))
 				{
@@ -316,7 +316,7 @@ namespace Heroes
 		// Gold Rush: coins fly to Speedy, or, while he's away, up into the portal and into
 		// the wallet (D31).
 		bool aPull = theCtx.mGoldRush;
-		Vec aPullTo = theCtx.mOwnerHeroHere ? theCtx.mOwnerHeroPos : TheMap().mPortal;
+		Vec aPullTo = theCtx.mOwnerHeroHere ? theCtx.mOwnerHeroPos : TankMap().mPortal;
 		// Stinky the pet crawls toward the nearest coin that's low enough to reach soon.
 		if (mCollectorLevel > 0)
 		{
@@ -324,7 +324,7 @@ namespace Heroes
 			float aBestD = 1e9f;
 			for (const Coin& c : mCoins)
 			{
-				if (c.mPos.y < FloorY(c.mPos.x) - 160)
+				if (c.mPos.y < FloorY(mTeam, c.mPos.x) - 160)
 					continue;
 				float d = std::fabs(c.mPos.x - mCollectorPos.x);
 				if (d < aBestD)
@@ -338,7 +338,7 @@ namespace Heroes
 				float aStep = kCollectorSpeed[std::min(mCollectorLevel, 2) - 1] * theDt;
 				float x = mCollectorPos.x + Clamp(aBest->mPos.x - mCollectorPos.x, -aStep, aStep);
 				mCollectorRight = x > mCollectorPos.x;
-				mCollectorPos = WalkerPos(x, kCollectorRadius);
+				mCollectorPos = WalkerPos(mTeam, x, kCollectorRadius);
 			}
 		}
 		for (size_t i = 0; i < mCoins.size();)
@@ -352,14 +352,14 @@ namespace Heroes
 			}
 			else
 			{
-				float aFloor = FloorY(c.mPos.x) - 12;
+				float aFloor = FloorY(mTeam, c.mPos.x) - 12;
 				if (c.mPos.y < aFloor)
 					c.mPos.y = std::min(aFloor, c.mPos.y + kCoinFallSpeed * theDt);
 				else if (c.mLandedAt == 0)
 					c.mLandedAt = theNow;
 				if (theCtx.mScavenger && theCtx.mOwnerHeroHere && Dist(c.mPos, theCtx.mOwnerHeroPos) < 56)
 					aTaken = true;
-				if (mCollectorLevel > 0 && std::fabs(c.mPos.x - mCollectorPos.x) < kCollectorReach && c.mPos.y > FloorY(c.mPos.x) - 50)
+				if (mCollectorLevel > 0 && std::fabs(c.mPos.x - mCollectorPos.x) < kCollectorReach && c.mPos.y > FloorY(mTeam, c.mPos.x) - 50)
 					aTaken = true;				// Stinky the pet
 			}
 			if (aTaken)
@@ -384,7 +384,7 @@ namespace Heroes
 		for (size_t i = 0; i < mFood.size();)
 		{
 			Food& fd = mFood[i];
-			float aFloor = FloorY(fd.mPos.x) - 8;
+			float aFloor = FloorY(mTeam, fd.mPos.x) - 8;
 			if (fd.mPos.y < aFloor)
 				fd.mPos.y = std::min(aFloor, fd.mPos.y + kFoodFallSpeed * theDt);
 			else if (fd.mLandedAt == 0)
@@ -404,7 +404,7 @@ namespace Heroes
 	Vec Arena::MinionGoal(Minion& m, uint32_t theNow, const ArenaContext& theCtx, float& theReach)
 	{
 		const MinionDef& d = MinionDefOf(m.mKind);
-		const MapDef& aMap = TheMap();
+		const MapDef& aMap = TankMap();
 		theReach = d.mRange + d.mRadius;
 		if (m.mTarget.mKind == ENT_HERO)
 		{
@@ -501,14 +501,14 @@ namespace Heroes
 					else if (mTower[1 - aLaneTower].mAlive)
 					{
 						m.mLane = (uint8_t)(1 - aLaneTower);
-						m.mWaypoint = (int)TheMap().mLane[m.mLane].size();	// straight over
+						m.mWaypoint = (int)TankMap().mLane[m.mLane].size();	// straight over
 						aTarget = EntityRef::Of(mTeam, ENT_TOWER, (uint32_t)m.mLane);
 					}
 				}
 				m.mTarget = aTarget;
 			}
 
-			if (Elapsed(theNow, m.mStunUntil) == false)
+			if (m.Disabled(theNow))
 				continue;
 			float aReach;
 			Vec aGoal = MinionGoal(m, theNow, theCtx, aReach);
@@ -519,7 +519,7 @@ namespace Heroes
 			{
 				Vec aOld = m.mPos;
 				StepToward(m.mPos, aGoal, aSpeed * theDt);
-				m.mPos = ClampToWater(m.mPos, d.mRadius * 0.6f);
+				m.mPos = ClampToWater(mTeam, m.mPos, d.mRadius * 0.6f);
 				if (std::fabs(m.mPos.x - aOld.x) > 0.05f)
 					m.mRight = m.mPos.x > aOld.x;
 			}
@@ -541,7 +541,7 @@ namespace Heroes
 					b.mPos = m.mPos;
 					b.mTarget = m.mTarget;
 					b.mTargetPos = aGoal;
-					b.mDamage = (m.mTarget.mKind == ENT_HERO ? d.mHeroHit : d.mStructHit) * m.mMult;
+					b.mDamage = (m.mTarget.mKind == ENT_HERO ? d.mHeroHit : d.mStructHit) * m.HitMult(theNow);
 					b.mTeam = (uint8_t)aTeam;
 					b.mSource = SRC_MINION;
 					mBolts.push_back(b);
@@ -556,18 +556,18 @@ namespace Heroes
 				}
 				else if (m.mTarget.mKind == ENT_HERO)
 				{
-					h.mDamage = d.mHeroHit * m.mMult;
+					h.mDamage = d.mHeroHit * m.HitMult(theNow);
 					mOutHits.push_back({ m.mTarget, h });
 				}
 				else if (m.mTarget.mKind == ENT_MINION)
 				{
-					h.mDamage = d.mHeroHit * m.mMult;
+					h.mDamage = d.mHeroHit * m.HitMult(theNow);
 					if (Minion* o = FindMinion(m.mTarget.mId))
 						HurtMinion(*o, h, theNow);
 				}
 				else
 				{
-					h.mDamage = d.mStructHit * m.mMult;
+					h.mDamage = d.mStructHit * m.HitMult(theNow);
 					HurtStructure(m.mTarget.mKind == ENT_CORE ? 2 : (int)m.mTarget.mId, h, theNow);
 				}
 			}
@@ -587,13 +587,25 @@ namespace Heroes
 		}
 	}
 
-	void Arena::HurtMinion(Minion& m, const Hit& theHit, uint32_t theNow)
+	MinionHitResult HurtMinionCommon(Minion& m, const Hit& theHit, uint32_t theNow, int theArena)
 	{
+		MinionHitResult r;
 		if (m.mHp <= 0)
-			return;
+			return r;
+		const MinionDef& d = MinionDefOf(m.mKind);
+		bool aMonster = IsMonster(m.mKind);
+		if (theHit.mRallyMs > 0)
+		{
+			if (m.Team(theNow) == theHit.mTeam)
+				m.mRallyUntil = std::max(m.mRallyUntil, theNow + theHit.mRallyMs);
+			return r;
+		}
 		if (theHit.mCharmMs > 0)
 		{
-			if (m.mKind == MIN_MINI || m.mKind == MIN_SYLV)	// big aliens are too proud
+			// Big aliens are too proud (Pied Piper sends mCleanse to charm them anyway), and
+			// monsters never switch sides.
+			bool aSmall = m.mKind == MIN_MINI || m.mKind == MIN_SYLV;
+			if (!aMonster && m.mKind != MIN_SQUID && (aSmall || theHit.mCleanse))
 			{
 				m.mCharmUntil = theNow + theHit.mCharmMs;
 				m.mCharmTeam = theHit.mTeam;
@@ -601,45 +613,63 @@ namespace Heroes
 				m.mTarget = EntityRef();
 				m.mNextThink = theNow;
 			}
-			return;
+			if (theHit.mDamage <= 0)
+				return r;
 		}
 		if (theHit.mStunMs > 0)
-			m.mStunUntil = std::max(m.mStunUntil, theNow + theHit.mStunMs);
+			m.mStunUntil = std::max(m.mStunUntil, theNow + (uint32_t)(theHit.mStunMs * (aMonster ? 0.5f : 1.0f)));
+		if (theHit.mSleepMs > 0)
+			m.mSleepUntil = std::max(m.mSleepUntil, theNow + (uint32_t)(theHit.mSleepMs * (aMonster ? 0.5f : 1.0f)));
 		if (theHit.mSlowMs > 0)
 		{
 			m.mSlowUntil = theNow + theHit.mSlowMs;
 			m.mSlowPct = theHit.mSlowPct;
 		}
-		if (theHit.mPull)
-			m.mPos = ClampToWater(theHit.mPullTo, MinionDefOf(m.mKind).mRadius * 0.6f);
-		if (theHit.mPush.x != 0 || theHit.mPush.y != 0)
-			m.mPos = ClampToWater(m.mPos + theHit.mPush, MinionDefOf(m.mKind).mRadius * 0.6f);
-		if (theHit.mDamage <= 0)
-			return;
-		m.mHp -= theHit.mDamage;
+		float aR = d.mRadius * 0.6f;
+		if (theHit.mPull && !aMonster)
+			m.mPos = ClampToWater(theArena, theHit.mPullTo, aR);
+		if ((theHit.mPush.x != 0 || theHit.mPush.y != 0) && m.mKind != MIN_BOSS)
+			m.mPos = ClampToWater(theArena, m.mPos + theHit.mPush * (aMonster ? 0.4f : 1.0f), aR);
+		float aDamage = theHit.mDamage + theHit.mMaxHpPct * m.mMaxHp * (aMonster ? 0.5f : 1.0f);
+		if (aDamage <= 0)
+			return r;
+		m.mHp -= aDamage;
+		if (theHit.mSleepMs == 0)
+			m.mSleepUntil = 0;						// damage wakes it
 		if (theHit.mPlayer >= 0)
 			m.mLastHitBy = theHit.mPlayer;
-		if (m.mHp <= 0)
+		if (aMonster && theHit.mPlayer >= 0)
 		{
-			const MinionDef& d = MinionDefOf(m.mKind);
-			mMinionsKilled++;
-			Reward r;
-			r.mPlayer = theHit.mPlayer;
-			r.mTeam = (int8_t)theHit.mTeam;
-			r.mXp = m.mKind == MIN_MINI ? kXpMinion : kXpBigAlien;
-			r.mMoney = d.mBounty;
-			r.mWhat = ENT_MINION;
-			mOutRewards.push_back(r);
-			Event e;
-			e.mType = EV_BURST;
-			e.mArena = (uint8_t)mTeam;
-			e.mA = m.mPos;
-			e.mValue = d.mRadius;
-			e.mParam = LOOK_NONE;
-			mOutEvents.push_back(e);
-			Sound(SND_EXPLODE, m.mPos);
-			Text(m.mPos - Vec(0, 20), "+$" + std::to_string(d.mBounty), TC_MONEY);
+			m.mAggroPlayer = theHit.mPlayer;
+			m.mAggroUntil = theNow + (uint32_t)(kMonsterAggroS * 1000);
+			m.mHoming = false;
 		}
+		r.mDied = m.mHp <= 0;
+		return r;
+	}
+
+	void Arena::HurtMinion(Minion& m, const Hit& theHit, uint32_t theNow)
+	{
+		if (!HurtMinionCommon(m, theHit, theNow, mTeam).mDied)
+			return;
+		const MinionDef& d = MinionDefOf(m.mKind);
+		mMinionsKilled++;
+		Reward r;
+		r.mPlayer = theHit.mPlayer;
+		r.mTeam = (int8_t)theHit.mTeam;
+		r.mXp = m.mKind == MIN_MINI ? kXpMinion : kXpBigAlien;
+		r.mMoney = d.mBounty;
+		r.mWhat = ENT_MINION;
+		mOutRewards.push_back(r);
+		Event e;
+		e.mType = EV_BURST;
+		e.mArena = (uint8_t)mTeam;
+		e.mA = m.mPos;
+		e.mValue = d.mRadius;
+		e.mParam = LOOK_NONE;
+		mOutEvents.push_back(e);
+		Sound(SND_EXPLODE, m.mPos);
+		Text(m.mPos - Vec(0, 20), "+$" + std::to_string(d.mBounty), TC_MONEY);
 	}
 
 	// Backdoor protection: a hero's hits on a structure count for little unless that
@@ -648,7 +678,7 @@ namespace Heroes
 	{
 		if (theHit.mSource != SRC_ATTACK && theHit.mSource != SRC_ABILITY && theHit.mSource != SRC_ZONE)
 			return 1.0f;
-		Vec aAt = theWhich == 2 ? TheMap().mCore : TheMap().mTower[theWhich];
+		Vec aAt = theWhich == 2 ? TankMap().mCore : TankMap().mTower[theWhich];
 		for (const Minion& m : mMinions)
 			if (m.mHp > 0 && m.Team(theNow) == theHit.mTeam && Dist(m.mPos, aAt) < kBackdoorR)
 				return 1.0f;
@@ -657,7 +687,7 @@ namespace Heroes
 
 	void Arena::HurtStructure(int theWhich, const Hit& theHit, uint32_t theNow)
 	{
-		const MapDef& aMap = TheMap();
+		const MapDef& aMap = TankMap();
 		if (theWhich < 2)
 		{
 			Tower& t = mTower[theWhich];
@@ -756,7 +786,7 @@ namespace Heroes
 	///////////////////////////////////////////////////////////////////////////
 	void Arena::StepTowers(uint32_t theNow, float theDt, const ArenaContext& theCtx)
 	{
-		const MapDef& aMap = TheMap();
+		const MapDef& aMap = TankMap();
 		for (int i = 0; i < 2; i++)
 		{
 			Tower& t = mTower[i];
@@ -776,7 +806,7 @@ namespace Heroes
 				if (h.mTeam == mTeam || !h.mTargetable)
 					continue;
 				float dd = Dist(h.mPos, aGun);
-				if (dd > aRange + h.mRadius || !LineOfSight(aGun, h.mPos))
+				if (dd > aRange + h.mRadius || !LineOfSight(mTeam, aGun, h.mPos))
 					continue;
 				int aR = (h.mHurtMyHeroAt != 0 && !Elapsed(theNow, h.mHurtMyHeroAt + (uint32_t)(kTowerAggroS * 1000))) ? 0 : (h.mTaunting ? 1 : 3);
 				if (aR < aRank || (aR == aRank && dd < aBest))
@@ -792,7 +822,7 @@ namespace Heroes
 				if (m.mHp <= 0 || m.Team(theNow) == mTeam)
 					continue;
 				float dd = Dist(m.mPos, aGun);
-				if (dd > aRange + MinionDefOf(m.mKind).mRadius || !LineOfSight(aGun, m.mPos))
+				if (dd > aRange + MinionDefOf(m.mKind).mRadius || !LineOfSight(mTeam, aGun, m.mPos))
 					continue;
 				if (2 < aRank || (aRank == 2 && dd < aBest))
 				{
@@ -815,7 +845,7 @@ namespace Heroes
 			b.mPos = aGun;
 			b.mTarget = aTarget;
 			b.mTargetPos = aTargetPos;
-			b.mDamage = TowerDamage() * (1.0f + kTowerRampPerShot * t.mRamp);
+			b.mDamage = TowerDamage() * (1.0f + kTowerRampPerShot * t.mRamp) * (aTarget.mKind == ENT_MINION ? kTowerVsMinion : 1.0f);
 			b.mTeam = (uint8_t)mTeam;
 			b.mSource = SRC_TOWER;
 			mBolts.push_back(b);
@@ -949,7 +979,7 @@ namespace Heroes
 			return CLICK_LASER;
 		}
 		// Otherwise food.
-		if ((int)mFood.size() >= mPellets || p.y > FloorY(p.x) - 10 || p.y < kSurfaceY)
+		if ((int)mFood.size() >= mPellets || p.y > FloorY(mTeam, p.x) - 10 || p.y < kSurfaceY)
 			return CLICK_REFUSED;
 		if (!Spend(kFoodPrice))
 			return CLICK_REFUSED;
@@ -1004,31 +1034,34 @@ namespace Heroes
 		}
 	}
 
-	void Arena::SpawnWave(const std::vector<uint8_t>& theKinds, float theMult, int theFromTeam, uint32_t theNow)
+	void Arena::SpawnWave(const std::vector<Arrival>& theMinions, int theFromTeam, uint32_t theNow)
 	{
-		const MapDef& aMap = TheMap();
-		for (size_t i = 0; i < theKinds.size(); i++)
+		const MapDef& aMap = TankMap();
+		for (const Arrival& a : theMinions)
 		{
-			const MinionDef& d = MinionDefOf(theKinds[i]);
+			const MinionDef& d = MinionDefOf(a.mKind);
 			Minion m;
 			m.mId = mNextId++;
-			m.mKind = theKinds[i];
+			m.mKind = a.mKind;
 			m.mTeam = (uint8_t)theFromTeam;
-			m.mLane = (uint8_t)(i % 2);
+			m.mLane = (uint8_t)mRng.Int(2);
 			m.mPos = aMap.mPortal + Vec(mRng.Range(-30, 30), mRng.Range(-10, 30));
-			m.mMult = theMult;
-			m.mHp = m.mMaxHp = d.mHealth * theMult;
+			m.mMult = a.mMult;
+			m.mMaxHp = d.mHealth * a.mMult;
+			m.mHp = std::max(1.0f, m.mMaxHp * Clamp(a.mHpFrac, 0.01f, 1));
 			m.mNextThink = theNow;
 			m.mNextHit = theNow + 500;
 			m.mNextBite = theNow + 1000;
 			m.mRight = m.mLane == 1;
 			mMinions.push_back(m);
 		}
+		if (theMinions.empty())
+			return;
 		Event e;
 		e.mType = EV_WAVE;
 		e.mArena = (uint8_t)mTeam;
 		e.mA = aMap.mPortal;
-		e.mValue = (float)theKinds.size();
+		e.mValue = (float)theMinions.size();
 		mOutEvents.push_back(e);
 		Sound(SND_WARP, aMap.mPortal);
 	}
@@ -1052,6 +1085,7 @@ namespace Heroes
 	ArenaSnap Arena::Snapshot() const
 	{
 		ArenaSnap s;
+		s.mArena = (uint8_t)mTeam;
 		s.mTeam = (uint8_t)mTeam;
 		for (int i = 0; i < 2; i++)
 		{
@@ -1083,7 +1117,8 @@ namespace Heroes
 			if (m.mHp <= 0)
 				continue;
 			uint8_t aFlags = (m.mRight ? MF_RIGHT : 0) | (!Elapsed(mLastStep, m.mCharmUntil) ? MF_CHARMED : 0)
-				| (!Elapsed(mLastStep, m.mStunUntil) ? MF_STUNNED : 0) | (!Elapsed(mLastStep, m.mAttackingUntil) ? MF_ATTACKING : 0);
+				| (!Elapsed(mLastStep, m.mStunUntil) ? MF_STUNNED : 0) | (!Elapsed(mLastStep, m.mAttackingUntil) ? MF_ATTACKING : 0)
+				| (!Elapsed(mLastStep, m.mSleepUntil) ? MF_ASLEEP : 0) | (!Elapsed(mLastStep, m.mRallyUntil) ? MF_RALLIED : 0);
 			s.mMinions.push_back({ m.mId, m.mKind, aFlags, (uint8_t)m.Team(mLastStep), m.mHp / std::max(1.0f, m.mMaxHp), m.mPos });
 		}
 		return s;

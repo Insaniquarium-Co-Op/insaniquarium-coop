@@ -20,7 +20,7 @@
 namespace Coop
 {
 	static const char		kMagic[8] = { 'I','N','S','Q','C','O','O','P' };
-	static const uint16_t	kProtocolVersion = 9;	// 4: Tank Race messages, 5: poison raid attack, 6: Alien Keeper, 7: keeper clock and juveniles, 8: Pet Heroes, 9: Pet Heroes food quality and the coin pet
+	static const uint16_t	kProtocolVersion = 10;	// 4: Tank Race messages, 5: poison raid attack, 6: Alien Keeper, 7: keeper clock and juveniles, 8: Pet Heroes, 9: Pet Heroes food quality and the coin pet, 10: Pet Heroes 3.0 (the Trench, talents, new heroes)
 	static const uint16_t	kDefaultPort = 24050;
 	static const uint16_t	kDiscoveryPort = 24051;
 	static const uint32_t	kMaxMessageSize = 64u * 1024u * 1024u;

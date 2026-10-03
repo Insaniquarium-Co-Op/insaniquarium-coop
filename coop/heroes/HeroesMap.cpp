@@ -3,9 +3,9 @@
 
 namespace Heroes
 {
-	float FloorY(float x)
+	float FloorY(int theArena, float x)
 	{
-		const std::vector<Vec>& f = TheMap().mFloor;
+		const std::vector<Vec>& f = MapOf(theArena).mFloor;
 		if (x <= f.front().x)
 			return f.front().y;
 		for (size_t i = 1; i < f.size(); i++)
@@ -17,33 +17,33 @@ namespace Heroes
 		return f.back().y;
 	}
 
-	Vec ClampToWater(Vec p, float r)
+	Vec ClampToWater(int theArena, Vec p, float r)
 	{
 		p.x = Clamp(p.x, r, kWorldW - r);
-		p.y = Clamp(p.y, kSurfaceY + r, FloorY(p.x) - r);
+		p.y = Clamp(p.y, kSurfaceY + r, FloorY(theArena, p.x) - r);
 		return p;
 	}
 
-	Vec WalkerPos(float x, float r)
+	Vec WalkerPos(int theArena, float x, float r)
 	{
 		x = Clamp(x, r, kWorldW - r);
-		return Vec(x, FloorY(x) - r);
+		return Vec(x, FloorY(theArena, x) - r);
 	}
 
-	bool SwimmerFits(Vec p, float r)
+	bool SwimmerFits(int theArena, Vec p, float r)
 	{
-		if (p.x < r || p.x > kWorldW - r || p.y < kSurfaceY + r || p.y > FloorY(p.x) - r)
+		if (p.x < r || p.x > kWorldW - r || p.y < kSurfaceY + r || p.y > FloorY(theArena, p.x) - r)
 			return false;
-		for (const WallDef& w : TheMap().mWalls)
+		for (const WallDef& w : MapOf(theArena).mWalls)
 			if (DistPointPoly(w.mPoly, p) < r)
 				return false;
 		return true;
 	}
 
-	float FirstBlock(Vec a, Vec b)
+	float FirstBlock(int theArena, Vec a, Vec b)
 	{
 		float aBest = 2;
-		for (const WallDef& w : TheMap().mWalls)
+		for (const WallDef& w : MapOf(theArena).mWalls)
 		{
 			float t;
 			if (SegPoly(a, b, w.mPoly, &t) && t < aBest)
@@ -51,7 +51,7 @@ namespace Heroes
 		}
 		// The floor: a segment that dips below it. Points resting on the floor (walkers,
 		// towers, the core) sit a little above it, so a small margin keeps them visible.
-		const std::vector<Vec>& f = TheMap().mFloor;
+		const std::vector<Vec>& f = MapOf(theArena).mFloor;
 		for (size_t i = 1; i < f.size(); i++)
 		{
 			float t;
@@ -62,28 +62,28 @@ namespace Heroes
 		return aBest;
 	}
 
-	bool WallBetween(Vec a, Vec b)
+	bool WallBetween(int theArena, Vec a, Vec b)
 	{
-		for (const WallDef& w : TheMap().mWalls)
+		for (const WallDef& w : MapOf(theArena).mWalls)
 			if (SegPoly(a, b, w.mPoly, nullptr))
 				return true;
 		return false;
 	}
 
-	bool FloorBetween(Vec a, Vec b)
+	bool FloorBetween(int theArena, Vec a, Vec b)
 	{
-		const std::vector<Vec>& f = TheMap().mFloor;
+		const std::vector<Vec>& f = MapOf(theArena).mFloor;
 		for (size_t i = 1; i < f.size(); i++)
 			if (SegSeg(a, b, f[i - 1] + Vec(0, 6), f[i] + Vec(0, 6), nullptr))
 				return true;
 		return false;
 	}
 
-	bool LineOfSight(Vec a, Vec b) { return !WallBetween(a, b) && !FloorBetween(a, b); }
+	bool LineOfSight(int theArena, Vec a, Vec b) { return !WallBetween(theArena, a, b) && !FloorBetween(theArena, a, b); }
 
-	int KelpAt(Vec p)
+	int KelpAt(int theArena, Vec p)
 	{
-		const std::vector<KelpDef>& k = TheMap().mKelp;
+		const std::vector<KelpDef>& k = MapOf(theArena).mKelp;
 		for (size_t i = 0; i < k.size(); i++)
 			if (p.x >= k[i].mX0 && p.x <= k[i].mX1 && p.y >= k[i].mY0 && p.y <= k[i].mY1)
 				return (int)i;
@@ -98,12 +98,12 @@ namespace Heroes
 	struct Grid
 	{
 		std::vector<uint8_t> mOpen;
-		Grid()
+		explicit Grid(int theArena)
 		{
 			mOpen.resize(kGW * kGH);
 			for (int y = 0; y < kGH; y++)
 				for (int x = 0; x < kGW; x++)
-					mOpen[y * kGW + x] = SwimmerFits(Center(x, y), kPathRadius) ? 1 : 0;
+					mOpen[y * kGW + x] = SwimmerFits(theArena, Center(x, y), kPathRadius) ? 1 : 0;
 		}
 		static Vec Center(int x, int y) { return Vec((x + 0.5f) * kPathCell, (y + 0.5f) * kPathCell); }
 		bool Open(int x, int y) const { return x >= 0 && y >= 0 && x < kGW && y < kGH && mOpen[y * kGW + x] != 0; }
@@ -114,17 +114,17 @@ namespace Heroes
 		}
 	};
 
-	static const Grid& TheGrid()
+	static const Grid& TheGrid(int theArena)
 	{
-		static const Grid kGrid;
-		return kGrid;
+		static const Grid kTank(0), kTrenchGrid(kTrench);	// both tanks share a layout
+		return theArena == kTrench ? kTrenchGrid : kTank;
 	}
 
-	Vec NearestOpen(Vec p)
+	Vec NearestOpen(int theArena, Vec p)
 	{
-		const Grid& g = TheGrid();
-		p = ClampToWater(p, kPathRadius);
-		if (SwimmerFits(p, kPathRadius))
+		const Grid& g = TheGrid(theArena);
+		p = ClampToWater(theArena, p, kPathRadius);
+		if (SwimmerFits(theArena, p, kPathRadius))
 			return p;
 		int sx, sy;
 		Grid::Cell(p, sx, sy);
@@ -154,9 +154,9 @@ namespace Heroes
 		return p;
 	}
 
-	bool OpenLine(Vec a, Vec b)
+	bool OpenLine(int theArena, Vec a, Vec b)
 	{
-		const Grid& g = TheGrid();
+		const Grid& g = TheGrid(theArena);
 		float l = Dist(a, b);
 		int n = std::max(1, (int)(l / (kPathCell * 0.5f)));
 		for (int i = 0; i <= n; i++)
@@ -170,13 +170,13 @@ namespace Heroes
 		return true;
 	}
 
-	bool FindPath(Vec theFrom, Vec theTo, std::vector<Vec>& thePath)
+	bool FindPath(int theArena, Vec theFrom, Vec theTo, std::vector<Vec>& thePath)
 	{
 		thePath.clear();
-		const Grid& g = TheGrid();
-		theTo = NearestOpen(theTo);
-		Vec aStart = NearestOpen(theFrom);
-		if (OpenLine(aStart, theTo))
+		const Grid& g = TheGrid(theArena);
+		theTo = NearestOpen(theArena, theTo);
+		Vec aStart = NearestOpen(theArena, theFrom);
+		if (OpenLine(theArena, aStart, theTo))
 		{
 			thePath.push_back(theTo);
 			return true;
@@ -237,7 +237,7 @@ namespace Heroes
 		while (i < aCells.size())
 		{
 			size_t j = aCells.size() - 1;
-			while (j > i && !OpenLine(aAt, aCells[j]))
+			while (j > i && !OpenLine(theArena, aAt, aCells[j]))
 				j--;
 			thePath.push_back(aCells[j]);
 			aAt = aCells[j];

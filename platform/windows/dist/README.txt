@@ -155,33 +155,35 @@ fish first).
       and no money for a baby. Esc twice gives up the round.
 
 
-PET HEROES (new in 2.0; WASD and farming help in 2.2)
+PET HEROES (3.0: the Trench, nine heroes, a tutorial)
 -----------------------
-A MOBA on two tanks. Each of you keeps your own tank (twice the usual size)
-and plays one pet as a hero: Itchy (assassin), Clyde (mage), Rhubarb (tank),
-Angie (support) or Speedy (farmer). Break your friend's treasure-chest core
-to win. Host: VERSUS! > Pet Heroes > Start Match!, then both pick a hero and
-"Lock in!". Practice against the bot from the Co-op window. Hold H in a match
-for the controls.
+A MOBA. Each of you keeps your own tank (twice the usual size) and plays
+one pet as a hero. Between your tanks lies the Trench, where both sides'
+minions meet and fight. Break your friend's treasure-chest core to win.
+Host: VERSUS! > Pet Heroes > Start Match!, then both pick a hero and
+"Lock in!". Practice against the bot from the Co-op window, or press
+"Tutorial" there for a guided first match. Hold H in a match for help.
 
-* W A S D: move. Speedy and Rhubarb walk the floor: A/D walk, W or Space hops
-  (minions' bites miss you in the air), S near the portal's beam or a floor
-  pad crosses. Right-click: attack (or move there). Q E R: abilities at the
-  mouse, F: the ultimate (level 5). Ctrl+Q/E/R: pick your next upgrade.
-* Grey slate blocks are walls: they stop heroes and shots; food, fish and
-  minions pass behind them.
-* Left-click in your own tank: coins, food ($5), laser. Missed coins pay
-  half; Stinky (a pet in the shop) collects coins for you. A red banner
-  warns you when home is under attack while you're away. 1-4: quick-buy
-  (guppy, more food, breeder, carnivore). B: the shop (items, towers,
-  minions). Tab (hold): look at your tank while your hero is away.
-* The portal (top middle) goes to your friend's tank and back; Speedy and
-  Rhubarb ride its beam from the floor (S). The corner floor pads go there too.
-  After crossing you can't cross back for 8 s.
-* Every 30 s mini Sylvesters come through each portal at the other's two
-  towers (giant clams). Break both towers, then the core. Towers shrug off a
-  hero unless that hero's minions are close.
-* You're stronger in your own tank; kelp hides you. Sudden death at 15:00.
+Heroes: Itchy (assassin), Clyde (mage), Rhubarb (tank), Angie (support),
+Speedy (farmer), Presto (trickster: his ultimate copies the enemy hero),
+Niko (builder), Meryl (singer) and Shrapnel (artillery).
+
+* W A S D: move. Your hero attacks on its own. Speedy, Rhubarb and Niko
+  walk the floor: A/D walk, W or Space hops, S near a portal or pad crosses.
+  Right-click: attack something (a monster too), or move there.
+* Q E R F: tap to cast at the mouse, or hold to see where it goes and let
+  go (right-click cancels). F unlocks when your pet evolves at level 6.
+  Levels 3, 6 and 9: pick a talent with Z or X.
+* The portal (top middle) leads into the Trench; its far gate leads into
+  your friend's tank. The corner floor pads go straight there too.
+* In the Trench, minions that die drop coins: touch them to take them.
+  Beat the Gus and Balrog camps for buffs; the Psychosquid (4:00) joins
+  your next wave; the Boss (8:00) makes you huge for 2 minutes.
+* Left-click in your tank, or in the home window (top right while you're
+  away): coins, food ($5), laser. 1-4: quick-buy (guppy, food, breeder,
+  carnivore); 5: the item suggested for your hero; B: the shop.
+* Break both towers (giant clams), then the core. Push with your minions.
+  Kill streaks raise your bounty. Sudden death from 12:00.
 
 
 CONTROLS & CO-OP EXTRAS

@@ -42,8 +42,9 @@ PLAYING TOGETHER
 Everything works the same as on Windows: Main menu > Co-op > Host a Game or
 Join a Game. Once connected, the host's main menu shows a multiplayer panel:
 Co-op or Coin Rivals for Adventure and Time Trial, and VERSUS! for Tank Race,
-Alien Keeper and Pet Heroes (the new MOBA: practice it against the bot from
-Co-op > "Heroes Practice"; hold H in a match for the controls).
+Alien Keeper and Pet Heroes (the MOBA: practice it against the bot from
+Co-op > "Heroes Practice", where "Tutorial" teaches it step by step; hold H
+in a match for the controls).
 See the README on GitHub for the full rules.
 
 * The first time you host, macOS may ask to let the app accept incoming

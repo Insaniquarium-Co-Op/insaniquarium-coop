@@ -1,4 +1,4 @@
-// Pet Heroes - one tank, simulated by its owner's side: the farm (fish, coins, food),
+// Pet Heroes - one team's tank, simulated by its owner's side: the farm (fish, coins, food),
 // the invading minions, the towers, the core, the owner's wallet and shop levels.
 
 #ifndef __HEROES_ARENA_H__
@@ -52,13 +52,25 @@ namespace Heroes
 		uint32_t	mCharmUntil = 0;
 		uint8_t		mCharmTeam = 0;
 		int8_t		mCharmPlayer = -1;
-		uint32_t	mStunUntil = 0, mSlowUntil = 0;
+		uint32_t	mStunUntil = 0, mSlowUntil = 0, mSleepUntil = 0, mRallyUntil = 0;
 		float		mSlowPct = 0;
 		EntityRef	mTarget;
 		bool		mRight = false;
 		int8_t		mLastHitBy = -1;		// player who last hurt it (rewards)
-		int			Team(uint32_t theNow) const { return theNow < mCharmUntil ? mCharmTeam : mTeam; }
+		// Monsters in the Trench (team 2).
+		int8_t		mSlot = -1;				// MonsterSlot
+		Vec			mHome;
+		int8_t		mAggroPlayer = -1;		// the hero it's chasing
+		uint32_t	mAggroUntil = 0, mNextSpecial = 0;
+		bool		mHoming = false;		// swimming home to heal
+		int			Team(uint32_t theNow) const { return (int32_t)(theNow - mCharmUntil) < 0 ? mCharmTeam : mTeam; }
+		bool		Disabled(uint32_t theNow) const { return (int32_t)(theNow - mStunUntil) < 0 || (int32_t)(theNow - mSleepUntil) < 0; }
+		float		HitMult(uint32_t theNow) const { return mMult * ((int32_t)(theNow - mRallyUntil) < 0 ? 1.3f : 1.0f); }
 	};
+
+	// Hits on minions are the same in a tank and in the Trench.
+	struct MinionHitResult { bool mDied = false; };
+	MinionHitResult HurtMinionCommon(Minion& m, const Hit& theHit, uint32_t theNow, int theArena);
 
 	struct Tower
 	{
@@ -92,6 +104,7 @@ namespace Heroes
 		bool		mScavenger = false;		// Speedy: collect coins he touches
 		bool		mGoldRush = false;		// Speedy's R: fish drop double, coins fly to him (away: to the wallet)
 		bool		mGrace = false;			// Angie: dead fish may come back
+		bool		mFanClub = false;		// Meryl: fish drop coins faster
 		bool		mSuddenDeath = false;	// the core loses its armor
 	};
 
@@ -148,13 +161,13 @@ namespace Heroes
 		int			FishCount() const;
 
 		void		ApplyHit(const EntityRef& theTarget, const Hit& theHit, uint32_t theNow);
-		void		SpawnWave(const std::vector<uint8_t>& theKinds, float theMult, int theFromTeam, uint32_t theNow);
+		void		SpawnWave(const std::vector<Arrival>& theMinions, int theFromTeam, uint32_t theNow);	// at the portal
 		void		Revive(int theCount, uint32_t theNow);
 		bool		CoreOpen() const { return !mTower[0].mAlive && !mTower[1].mAlive; }
 		float		TowerRange() const { return kTowerRange + 40.0f * mTowerLevel; }
 		float		TowerDamage() const { return kTowerHit * (1.0f + 0.25f * mTowerLevel); }
 		int			AliveTowers() const { return (mTower[0].mAlive ? 1 : 0) + (mTower[1].mAlive ? 1 : 0); }
-		Vec			TowerGun(int i) const { return TheMap().mTower[i] - Vec(0, 40); }
+		Vec			TowerGun(int i) const { return TankMap().mTower[i] - Vec(0, 40); }
 
 		ArenaSnap	Snapshot() const;
 
