@@ -25,6 +25,7 @@
 #include <SexyAppFramework/KeyCodes.h>
 #include <SexyAppFramework/Common.h>
 
+#include <SDL.h>
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
@@ -410,6 +411,21 @@ namespace Coop
 		}
 	}
 
+	// One line per 2 s for whoever receives a picture stream (INSANIQ_COOPSTATS).
+	void Session::LogReceiveStats()
+	{
+		uint32_t aNow = NetMillis();
+		if (mRecvStatStart == 0)
+			mRecvStatStart = aNow;
+		if (aNow - mRecvStatStart < 2000)
+			return;
+		if (getenv("INSANIQ_COOPSTATS"))
+			Log("Recv: %u frames in %u ms (%.1f fps), worst gap %u ms, %.0f kbps, ping %d ms (min %d, max %d)", mRecvStatFrames, aNow - mRecvStatStart, mRecvStatFrames * 1000.0 / (aNow - mRecvStatStart), mRecvStatMaxGap, mRecvStatBytes * 8.0 / (aNow - mRecvStatStart), mRttMs, mRecvStatRttMin, mRecvStatRttMax);
+		mRecvStatStart = aNow;
+		mRecvStatFrames = mRecvStatMaxGap = mRecvStatBytes = 0;
+		mRecvStatRttMin = mRecvStatRttMax = -1;
+	}
+
 	void Session::SendPing()
 	{
 		ByteWriter w;
@@ -545,6 +561,10 @@ namespace Coop
 			{
 				int aRtt = (int)(NetMillis() - aSent);
 				mRttMs = mRttMs < 0 ? aRtt : (mRttMs * 3 + aRtt) / 4;
+				if (mRecvStatRttMin < 0 || aRtt < mRecvStatRttMin)
+					mRecvStatRttMin = aRtt;
+				if (aRtt > mRecvStatRttMax)
+					mRecvStatRttMax = aRtt;
 			}
 			break;
 		}
@@ -631,6 +651,12 @@ namespace Coop
 			Leave("The picture stream from the host got corrupted.");
 			return;
 		}
+		uint32_t aGap = NetMillis() - mLastFrameRecvMs;
+		mFramesShown++;
+		mRecvStatFrames++;
+		mRecvStatBytes += (uint32_t)theMsg.mData.size();
+		if (aGap > mRecvStatMaxGap)
+			mRecvStatMaxGap = aGap;
 		mLastFrameRecvMs = NetMillis();
 		ByteWriter w;
 		w.U32(mDecoder.mSeq);
@@ -1126,6 +1152,7 @@ namespace Coop
 				Leave("Lost contact with the host.");
 				return;
 			}
+			LogReceiveStats();
 		}
 	}
 
@@ -1196,6 +1223,10 @@ namespace Coop
 			{
 				int aRtt = (int)(NetMillis() - aSent);
 				mRttMs = mRttMs < 0 ? aRtt : (mRttMs * 3 + aRtt) / 4;
+				if (mRecvStatRttMin < 0 || aRtt < mRecvStatRttMin)
+					mRecvStatRttMin = aRtt;
+				if (aRtt > mRecvStatRttMax)
+					mRecvStatRttMax = aRtt;
 			}
 			break;
 		}
@@ -1404,6 +1435,42 @@ namespace Coop
 	///////////////////////////////////////////////////////////////////////////
 	// Frame loop
 	///////////////////////////////////////////////////////////////////////////
+
+	// Between updates the game used to sleep up to 28 ms, so a click, a ping or a
+	// picture frame waited for the next update (D33). While connected, wait in short
+	// slices instead: handle messages as they arrive, draw a new frame at once, and
+	// hand input back to the loop as soon as there is some.
+	bool Session::IdleWait(int theMs)
+	{
+		static const bool kOff = getenv("INSANIQ_NO_IDLEWAIT") != nullptr;	// for comparisons
+		if (kOff || mRole == ROLE_NONE || !mConn.IsConnected())
+			return false;
+		uint32_t anEnd = NetMillis() + (uint32_t)theMs;
+		for (;;)
+		{
+			SDL_PumpEvents();
+			if (SDL_HasEvents(SDL_FIRSTEVENT, SDL_LASTEVENT))
+				return true;
+			int aLeft = (int32_t)(anEnd - NetMillis());
+			if (aLeft <= 0)
+				return true;
+			if (!mConn.WaitReadable(std::min(aLeft, 2)))
+				continue;
+			uint32_t aShown = mFramesShown;
+			if (mRole == ROLE_HOST)
+				PollHost();
+			else
+				PollGuest();
+			if (mFramesShown != aShown)
+			{
+				mApp->mWidgetManager->MarkAllDirty();
+				mApp->mHasPendingDraw = true;
+				return true;
+			}
+			if (mRole == ROLE_NONE || !mConn.IsConnected())
+				return true;
+		}
+	}
 	void Session::PreUpdateFrames()
 	{
 		if (mTestHarness)

@@ -138,6 +138,9 @@ namespace Coop
 		virtual void	PostDrawScreen() override;
 		virtual bool	AllowLostFocusPause() override { return mRole == ROLE_NONE; }
 		virtual bool	KeepRunningWhenMinimized() override { return HasGuest() || IsRacing(); }
+		virtual bool	IdleWait(int theMs) override;
+		uint64_t		NetBytesSent() const { return mConn.mBytesSent; }
+		uint64_t		NetBytesReceived() const { return mConn.mBytesReceived; }
 
 		// ---- AudioHook (host) ----
 		virtual void	OnSoundPlay(uint32_t theSerial, int theSfxId, double theVolume, int thePan, float thePitch, bool looping) override;
@@ -195,6 +198,7 @@ namespace Coop
 		void			FlushAudio();
 		void			SendMusicSnapshot();
 		void			SendPing();
+		void			LogReceiveStats();
 		void			DrawSharedOverlay(Sexy::Graphics* g);
 		void			PostDrawOverlays();
 		void			DrawRemoteCursor(Sexy::Graphics* g, int x, int y, int theCursor, int thePlayer);
@@ -252,6 +256,10 @@ namespace Coop
 		bool			mMovePending = false;
 		int				mMoveX = 0, mMoveY = 0;
 		uint32_t		mLastFrameRecvMs = 0;
+		uint32_t		mFramesShown = 0;		// frames decoded (IdleWait draws new ones at once)
+		// INSANIQ_COOPSTATS on the receiving side: frames, worst gap and ping samples per 2 s
+		uint32_t		mRecvStatStart = 0, mRecvStatFrames = 0, mRecvStatMaxGap = 0, mRecvStatBytes = 0;
+		int				mRecvStatRttMin = -1, mRecvStatRttMax = -1;
 		int				mLastAppliedCursor = -1;
 		std::string		mPendingLeaveReason;
 

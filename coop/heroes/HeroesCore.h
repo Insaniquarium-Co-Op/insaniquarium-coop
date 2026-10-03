@@ -79,6 +79,7 @@ namespace Heroes
 		EV_FISH_DIED,		// at mA
 		EV_REVIVE,			// fish came back at mA
 		EV_CROSS,			// hero mPlayer crossed into arena mArena
+		EV_BUMP,			// my hero ran into a wall at mA (local only, never sent; D35)
 	};
 
 	enum SoundId : uint8_t

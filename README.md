@@ -215,6 +215,8 @@ Matches run 15-20 minutes. Hold **H** in a match for the controls.
   crosses. **Right-click** an enemy to attack it (or the ground to move there).
   **Q E R** abilities and **F** the ultimate, aimed at the mouse. **Ctrl+Q/E/R** picks
   the next upgrade when you level up.
+- **Grey slate blocks are walls**: they stop heroes and shots (and give a little sand puff
+  when you swim into one); food, fish and minions pass behind them.
 - **Left-click** in your own tank: collect coins, drop food ($5), zap invaders with your
   laser. Coins you miss still pay half as they sink; **Stinky** (a pet in the shop's
   Upgrades) collects coins from the floor for you. While you're in the rival's tank, a red

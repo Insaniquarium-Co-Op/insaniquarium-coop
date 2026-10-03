@@ -2,6 +2,7 @@
 #include "CoopProtocol.h"
 
 #include <SDL.h>
+#include <cctype>
 #include <cstring>
 #include <algorithm>
 
@@ -208,6 +209,10 @@ namespace Coop
 		const uint8_t* p = (const uint8_t*)theData;
 		if (theSize > 0)
 			mOut.insert(mOut.end(), p, p + theSize);
+		// Send right away rather than at the next Poll(): waiting for the next update
+		// added up to 28 ms per message (D32). A failure shows up at the next Poll().
+		if (mState == CONNECTED)
+			FlushOut();
 	}
 
 	bool Connection::FlushOut()
@@ -330,6 +335,17 @@ namespace Coop
 		if (!ReadIn())
 			return false;
 		return true;
+	}
+
+	bool Connection::WaitReadable(int theMs)
+	{
+		if (mState != CONNECTED)
+			return false;
+		fd_set aRead;
+		FD_ZERO(&aRead);
+		FD_SET(RAW(mSocket), &aRead);
+		timeval aTv = { theMs / 1000, (theMs % 1000) * 1000 };
+		return select((int)mSocket + 1, &aRead, nullptr, nullptr, &aTv) > 0;
 	}
 
 	bool Connection::Receive(NetMessage& theMsg)
@@ -467,13 +483,35 @@ namespace Coop
 		return a == 100 && b >= 64 && b <= 127;
 	}
 
-	std::vector<std::string> GetLocalAddresses()
+	// Names of VPN adapters (ProtonVPN, NordVPN, OpenVPN/TAP, WireGuard...), lower case.
+	static bool LooksLikeVpnName(std::string theName)
+	{
+		for (char& c : theName)
+			c = (char)tolower((unsigned char)c);
+		static const char* kWords[] = { "vpn", "wireguard", "wintun", "tap-", "tap ", "nordlynx", "proton", "ipsec", "ppp" };
+		for (const char* w : kWords)
+			if (theName.find(w) != std::string::npos)
+				return true;
+		return false;
+	}
+
+	std::vector<std::string> GetLocalAddresses(bool* theVpnSeen)
 	{
 		struct Candidate { std::string mAddr; int mRank; };
 		std::vector<Candidate> aList;
-		auto Rank = [](const std::string& s, bool hasGateway) {
+		if (theVpnSeen != nullptr)
+			*theVpnSeen = false;
+		// A VPN adapter has a gateway and a private address too (ProtonVPN: 10.2.0.2), but
+		// it's never the home network: rank it with the leftovers and remember we saw it.
+		auto Rank = [&](const std::string& s, bool hasGateway, bool isVpn) {
 			if (IsTailscaleAddress(s))
 				return 1;
+			if (isVpn)
+			{
+				if (theVpnSeen != nullptr)
+					*theVpnSeen = true;
+				return 2;
+			}
 			bool isPrivate = s.rfind("192.168.", 0) == 0 || s.rfind("10.", 0) == 0 || s.rfind("172.", 0) == 0;
 			if (isPrivate && hasGateway)
 				return 0;
@@ -499,6 +537,13 @@ namespace Coop
 				if (a->OperStatus != IfOperStatusUp || a->IfType == IF_TYPE_SOFTWARE_LOOPBACK)
 					continue;
 				bool hasGateway = a->FirstGatewayAddress != nullptr;
+				// Real network cards are Ethernet or Wi-Fi; anything else (WireGuard, PPP...) is a tunnel.
+				char aName[512] = { 0 };
+				WideCharToMultiByte(CP_UTF8, 0, a->FriendlyName, -1, aName, sizeof(aName) - 1, nullptr, nullptr);
+				char aDesc[512] = { 0 };
+				WideCharToMultiByte(CP_UTF8, 0, a->Description, -1, aDesc, sizeof(aDesc) - 1, nullptr, nullptr);
+				bool isVpn = (a->IfType != IF_TYPE_ETHERNET_CSMACD && a->IfType != IF_TYPE_IEEE80211)
+					|| LooksLikeVpnName(aName) || LooksLikeVpnName(aDesc);
 				for (PIP_ADAPTER_UNICAST_ADDRESS u = a->FirstUnicastAddress; u != nullptr; u = u->Next)
 				{
 					if (u->Address.lpSockaddr->sa_family != AF_INET)
@@ -506,7 +551,7 @@ namespace Coop
 					char s[64] = { 0 };
 					inet_ntop(AF_INET, &((sockaddr_in*)u->Address.lpSockaddr)->sin_addr, s, sizeof(s));
 					if (strncmp(s, "169.254.", 8) != 0)
-						aList.push_back({ s, Rank(s, hasGateway) });
+						aList.push_back({ s, Rank(s, hasGateway, isVpn) });
 				}
 			}
 		}
@@ -521,7 +566,10 @@ namespace Coop
 				char s[64] = { 0 };
 				inet_ntop(AF_INET, &((sockaddr_in*)i->ifa_addr)->sin_addr, s, sizeof(s));
 				// No cheap gateway test here; treat broadcast-capable adapters as real LANs.
-				aList.push_back({ s, Rank(s, (i->ifa_flags & IFF_BROADCAST) != 0) });
+				// Tunnels (utun, ipsec, ppp) carry VPNs; Tailscale's is caught by its address.
+				std::string aName = i->ifa_name ? i->ifa_name : "";
+				bool isVpn = aName.rfind("utun", 0) == 0 || LooksLikeVpnName(aName);
+				aList.push_back({ s, Rank(s, (i->ifa_flags & IFF_BROADCAST) != 0, isVpn) });
 			}
 			freeifaddrs(anIfs);
 		}

@@ -14,8 +14,8 @@ namespace Heroes
 {
 	enum HeroMsg : uint8_t
 	{
-		HM_HERO = 1,		// HeroSnap (20 Hz)
-		HM_ARENA,			// ArenaSnap (15 Hz while the rival hero is in it, else 3 Hz)
+		HM_HERO = 1,		// HeroSnap, u32 sender time (every step; the time since 2.2.1)
+		HM_ARENA,			// ArenaSnap, u32 sender time (every step while the rival hero is in it, else 3 Hz)
 		HM_HITS,			// u8 count, { EntityRef, Hit }
 		HM_REWARDS,			// u8 count, Reward
 		HM_EVENTS,			// u8 count, Event

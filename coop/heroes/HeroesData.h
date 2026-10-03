@@ -230,7 +230,7 @@ namespace Heroes
 	struct WallDef
 	{
 		std::vector<Vec>	mPoly;
-		int					mArt;		// which cut-out to draw (HeroesDraw)
+		int					mArt;		// which piece it is (all drawn as the same slate block since D35)
 	};
 	struct KelpDef { float mX0, mY0, mX1, mY1; };
 

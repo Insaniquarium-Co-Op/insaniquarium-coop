@@ -168,6 +168,8 @@ for the controls.
   (minions' bites miss you in the air), S near the portal's beam or a floor
   pad crosses. Right-click: attack (or move there). Q E R: abilities at the
   mouse, F: the ultimate (level 5). Ctrl+Q/E/R: pick your next upgrade.
+* Grey slate blocks are walls: they stop heroes and shots; food, fish and
+  minions pass behind them.
 * Left-click in your own tank: coins, food ($5), laser. Missed coins pay
   half; Stinky (a pet in the shop) collects coins for you. A red banner
   warns you when home is under attack while you're away. 1-4: quick-buy
@@ -217,6 +219,9 @@ TROUBLESHOOTING
   permissions": something on the JOINING computer blocks the connection,
   usually antivirus software or a VPN. Allow InsaniquariumCoop.exe in the
   antivirus, or switch the VPN off while playing.
+* Nobody can find or join you, and "Home network" shows an odd address
+  (like 10.2.0.2): a VPN is on (the window says so). Switch it off while
+  playing.
 * "Version mismatch": both players need the same version of this mod.
 * Choppy picture for player 2: the stream needs very little bandwidth
   (usually well under 0.5 Mbit/s), so it's normally Wi-Fi trouble or a

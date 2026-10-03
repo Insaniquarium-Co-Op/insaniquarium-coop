@@ -50,10 +50,10 @@ index 0000000..a82568c
 +}
 diff --git a/b/PvZ-Portable/src/SexyAppFramework/CoopHooks.h b/PvZ-Portable/src/SexyAppFramework/CoopHooks.h
 new file mode 100644
-index 0000000..db86440
+index 0000000..956b857
 --- /dev/null
 +++ b/PvZ-Portable/src/SexyAppFramework/CoopHooks.h
-@@ -0,0 +1,97 @@
+@@ -0,0 +1,100 @@
 +// Insaniquarium Co-op: framework-level hook points.
 +//
 +// The co-op mod streams the host's rendering, audio and music to the guest and
@@ -140,6 +140,9 @@ index 0000000..db86440
 +		virtual void			PostDrawScreen() {}
 +		virtual bool			AllowLostFocusPause() { return true; }
 +		virtual bool			KeepRunningWhenMinimized() { return false; }
++		// Called instead of sleeping until the next update. Return false to sleep as
++		// usual; true if it waited itself (it may return early, e.g. when input arrives).
++		virtual bool			IdleWait(int theMs) { (void)theMs; return false; }
 +	};
 +	extern AppHook*				gAppHook;
 +	// Whether the WidgetManager actually drew anything in the frame just drawn.
@@ -152,7 +155,7 @@ index 0000000..db86440
 +
 +#endif
 diff --git a/PvZ-Portable/src/SexyAppFramework/SexyAppBase.cpp b/PvZ-Portable/src/SexyAppFramework/SexyAppBase.cpp
-index 9ce6468..229b7e8 100644
+index 9ce6468..28efbaf 100644
 --- a/PvZ-Portable/src/SexyAppFramework/SexyAppBase.cpp
 +++ b/PvZ-Portable/src/SexyAppFramework/SexyAppBase.cpp
 @@ -49,6 +49,7 @@
@@ -199,7 +202,25 @@ index 9ce6468..229b7e8 100644
  	mIsDrawing = false;
  
  	if ((drewScreen || (aStartTime - mLastDrawTick >= 1000) || (mCustomCursorDirty)) &&
-@@ -3390,6 +3401,12 @@ std::string	SexyAppBase::GetClipboard()
+@@ -2610,10 +2621,13 @@ bool SexyAppBase::Process(bool allowSleep)
+ 					++mSleepCount;
+ 
+ #ifndef __EMSCRIPTEN__
+-					timespec ts;
+-					ts.tv_sec = aTimeToNextFrame / 1000;
+-					ts.tv_nsec = (aTimeToNextFrame % 1000) * 1000000;
+-					nanosleep(&ts, &ts);
++					if (gAppHook == nullptr || !gAppHook->IdleWait(aTimeToNextFrame))
++					{
++						timespec ts;
++						ts.tv_sec = aTimeToNextFrame / 1000;
++						ts.tv_nsec = (aTimeToNextFrame % 1000) * 1000000;
++						nanosleep(&ts, &ts);
++					}
+ #endif
+ 
+ 					aCumSleepTime += aTimeToNextFrame;					
+@@ -3390,6 +3404,12 @@ std::string	SexyAppBase::GetClipboard()
  
  void SexyAppBase::SetCursor(int theCursorNum)
  {

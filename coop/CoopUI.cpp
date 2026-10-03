@@ -104,7 +104,9 @@ namespace Coop
 		std::string aLast;
 		if (mApp->RegistryReadString("CoopLastAddress", &aLast))
 			mAddressEdit->SetText(aLast);
-		mLocalIps = GetLocalAddresses();
+		mLocalIps = GetLocalAddresses(&mVpnSeen);
+		if (getenv("INSANIQ_FAKE_VPN") != nullptr)		// test scripts: show the VPN note
+			mVpnSeen = true;
 		mPage = S().IsHosting() ? PAGE_HOST : PAGE_MAIN;
 	}
 
@@ -386,6 +388,8 @@ namespace Coop
 					snprintf(aBuf, sizeof(aBuf), "Internet: open TCP port %d on your router or use Tailscale (see the README).", s.GetPort());
 					Para(aText, aBuf, 172, aGrey);
 				}
+				if (mVpnSeen)
+					Para(aText, "A VPN is on: turn it off if player 2 can't join.", 216, aRed);
 			}
 			Centered(aText, "Co-op difficulty:", 290, aGold);
 			Para(aText, GetTuning(s.GetDifficulty()).mBlurb, 307, aCyan);

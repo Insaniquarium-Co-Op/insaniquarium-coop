@@ -413,23 +413,56 @@ namespace Coop
 				g->DrawLine((int)SX(f[i - 1].x), (int)SY(f[i - 1].y), (int)SX(f[i].x), (int)SY(f[i].y));
 		}
 
+		// Walls are solid slate blocks (D35): a bevel (edges facing up are lit, edges facing
+		// down are shaded), a flat face, and a thick dark outline, so they read as things
+		// you bump into rather than part of the painted scenery.
 		static void DrawWalls(Graphics* g)
 		{
+			const Color kLit(228, 238, 250), kSide(168, 182, 202), kShade(72, 84, 106), kFace(150, 166, 188), kEdge(12, 15, 22);
+			const float kBevel = 11, kOutline = 3.2f;
 			for (const WallDef& w : TheMap().mWalls)
 			{
-				// Rocks from the castle tank's stones, pottery from the ruins, coral from the reef.
-				Image* aTex = StoneTex();
-				if (w.mArt == 2 || w.mArt == 3)
-					aTex = Cut(IMAGE_AQUARIUM2, 76, 126, 64, 96);
-				else if (w.mArt == 4)
-					aTex = Cut(IMAGE_AQUARIUM1, 26, 116, 84, 104);
-				TexturedPoly(g, aTex, w.mPoly, 0, 0, 1, 1, 0xFF6A6A7A);
-				g->SetColor(Color(10, 10, 20, 150));
-				for (size_t i = 0; i < w.mPoly.size(); i++)
+				const std::vector<Vec>& p = w.mPoly;
+				size_t n = p.size();
+				if (n < 3)
+					continue;
+				Vec c;
+				for (const Vec& q : p)
+					c += q;
+				c = c * (1.0f / n);
+				float aRadius = 0;
+				for (const Vec& q : p)
+					aRadius += Dist(q, c);
+				aRadius /= n;
+				for (size_t i = 0; i < n; i++)
 				{
-					const Vec& a = w.mPoly[i];
-					const Vec& b = w.mPoly[(i + 1) % w.mPoly.size()];
-					g->DrawLine((int)SX(a.x), (int)SY(a.y), (int)SX(b.x), (int)SY(b.y));
+					const Vec& a = p[i];
+					const Vec& b = p[(i + 1) % n];
+					Vec anOut(b.y - a.y, a.x - b.x);
+					if ((anOut.x * ((a.x + b.x) / 2 - c.x) + anOut.y * ((a.y + b.y) / 2 - c.y)) < 0)
+						anOut = anOut * -1.0f;
+					float aUp = -anOut.y / std::max(0.01f, Len(anOut));		// 1: faces straight up
+					g->SetColor(aUp > 0.35f ? kLit : (aUp < -0.35f ? kShade : kSide));
+					Point t[3] = { Point((int)SX(c.x), (int)SY(c.y)), Point((int)SX(a.x), (int)SY(a.y)), Point((int)SX(b.x), (int)SY(b.y)) };
+					g->PolyFill(t, 3, true);
+				}
+				float k = std::max(0.3f, 1 - kBevel / std::max(1.0f, aRadius));
+				std::vector<Point> aFace;
+				for (const Vec& q : p)
+					aFace.push_back(Point((int)SX(c.x + (q.x - c.x) * k), (int)SY(c.y + (q.y - c.y) * k)));
+				g->SetColor(kFace);
+				g->PolyFill(aFace.data(), (int)aFace.size(), true);
+				g->SetColor(kEdge);
+				for (size_t i = 0; i < n; i++)
+				{
+					const Vec& a = p[i];
+					const Vec& b = p[(i + 1) % n];
+					Vec d = b - a;
+					Vec m = Vec(-d.y, d.x) * (kOutline / std::max(0.01f, Len(d)));
+					Point q[4] = { Point((int)SX(a.x + m.x), (int)SY(a.y + m.y)), Point((int)SX(b.x + m.x), (int)SY(b.y + m.y)),
+						Point((int)SX(b.x - m.x), (int)SY(b.y - m.y)), Point((int)SX(a.x - m.x), (int)SY(a.y - m.y)) };
+					g->PolyFill(q, 4, true);
+					Disc(g, SX(a.x), SY(a.y), SX(kOutline), kEdge, 8);
 				}
 			}
 		}
@@ -887,6 +920,15 @@ namespace Coop
 						for (int k = 0; k < 4; k++)
 							Disc(g, SX(e.mA.x + (k - 1.5f) * 10), SY(e.mA.y - t * 70 - k * 8), 2.5f, Color(220, 240, 255, (int)(200 * (1 - t / 0.8f))), 8);
 					break;
+				case EV_BUMP:		// a little sand puff where my hero ran into a wall
+					if (!theUnder && t < 0.45f)
+						for (int k = 0; k < 7; k++)
+						{
+							float anAngle = k * 0.8976f + e.mId * 0.7f, r = 8 + t * 60;
+							Disc(g, SX(e.mA.x + std::cos(anAngle) * r), SY(e.mA.y + std::sin(anAngle) * r * 0.7f - t * 16), SX(8.0f - t * 9),
+								Color(236, 218, 172, (int)(235 * (1 - t / 0.45f))), 10);
+						}
+					break;
 				case EV_WAVE:
 					if (!theUnder && t < 0.8f)
 						Ring(g, SX(e.mA.x), SY(e.mA.y), SX(60 + t * 120), Color(230, 120, 255, (int)(230 * (1 - t / 0.8f))), 3);
@@ -909,7 +951,6 @@ namespace Coop
 			DrawKelp(g, v.mNow, false);
 			DrawFloor(g, v.mArena);
 			DrawPortal(g, v.mNow);
-			DrawWalls(g);
 			DrawEffects(g, v, true);
 			// A tower fires when it just sent a bolt.
 			bool aFiring[2] = { false, false };
@@ -927,13 +968,15 @@ namespace Coop
 				Sprite(g, IMAGE_STINKY, (v.mNow / (a.mCollectorLevel >= 2 ? 45 : 80)) % 10, 0, a.mCollectorPos.x, a.mCollectorPos.y, 0.8f, a.mCollectorRight);
 			for (const FishSnap& f : a.mFish)
 				DrawFish(g, f, v.mNow);
+			for (const MinionSnap& m : a.mMinions)
+				DrawMinion(g, m, v.mNow);
+			// Food, fish and minions pass behind the walls; coins (clicked) and heroes stay on top (D35).
+			DrawWalls(g);
 			for (const CoinSnap& c : a.mCoins)
 			{
 				int aRow = c.mKind == COIN_SILVER ? 0 : (c.mKind == COIN_GOLD ? 1 : 3);
 				Sprite(g, IMAGE_MONEY, (v.mNow / 80 + c.mId) % 10, aRow, c.mPos.x, c.mPos.y, 0.85f, false);
 			}
-			for (const MinionSnap& m : a.mMinions)
-				DrawMinion(g, m, v.mNow);
 			std::vector<HeroSnap> aHeroes;
 			s.ViewHeroes(v.mArena, aHeroes);
 			for (const HeroSnap& h : aHeroes)

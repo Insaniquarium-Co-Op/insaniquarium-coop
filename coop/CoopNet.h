@@ -48,6 +48,8 @@ namespace Coop
 		void			Send(uint8_t theType, const void* theData, size_t theSize);
 		void			Send(uint8_t theType, const std::vector<uint8_t>& theData) { Send(theType, theData.data(), theData.size()); }
 		bool			Receive(NetMessage& theMsg);
+		// Waits up to theMs for incoming data (or a failure); true if there is some.
+		bool			WaitReadable(int theMs);
 
 		State			GetState() const { return mState; }
 		bool			IsConnected() const { return mState == CONNECTED; }
@@ -126,8 +128,9 @@ namespace Coop
 	};
 
 	// IPv4 addresses of this machine (for "tell your friend to connect to..."),
-	// best first: real LAN adapters with a gateway, then Tailscale/VPN, then the rest.
-	std::vector<std::string> GetLocalAddresses();
+	// best first: real LAN adapters with a gateway, then Tailscale, then the rest (other
+	// VPNs among them). theVpnSeen: a VPN other than Tailscale has an address.
+	std::vector<std::string> GetLocalAddresses(bool* theVpnSeen = nullptr);
 	bool			IsTailscaleAddress(const std::string& theAddress);
 }
 

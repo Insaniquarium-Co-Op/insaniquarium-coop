@@ -58,6 +58,8 @@ TROUBLESHOOTING
 * "Couldn't reach the host": check the address and that the host allowed the
   network prompts above. Across the internet, see the README (port 24050,
   or Tailscale).
+* Nobody can find or join you: if the Co-op window says a VPN is on, switch
+  it off while playing.
 * "Version mismatch": both players need the same version of this mod.
 * A log is kept in ~/Library/Application Support/PopCap/InsaniquariumCoop/coop_log.txt
 

@@ -837,6 +837,23 @@ namespace Coop
 		s->Steer(aDir);
 	}
 
+	// INSANIQ_COOPSTATS: how far behind the rival is drawn, and how often it stalled (D34).
+	static void LogMirrorStats(const Side& theSide)
+	{
+		static uint32_t sLast = 0;
+		static uint64_t sSent = 0, sRecv = 0;
+		if (getenv("INSANIQ_COOPSTATS") == nullptr || gH.mSimNow - sLast < 2000)
+			return;
+		uint32_t aSpan = gH.mSimNow - sLast;
+		float aOut = (float)((S().NetBytesSent() - sSent) * 8.0 / aSpan), anIn = (float)((S().NetBytesReceived() - sRecv) * 8.0 / aSpan);
+		sLast = gH.mSimNow;
+		sSent = S().NetBytesSent();
+		sRecv = S().NetBytesReceived();
+		const Mirror& m = theSide.mOther;
+		S().Log("Heroes view: delay %u ms (target %u), interval %.0f ms, worst lateness %d ms, stalls %u of %u, %.0f kbps out, %.0f in", m.DelayMs(), m.TargetDelayMs(), m.mIntervalMs, m.mWorstLateMs, m.mStarved, m.mLookups, aOut, anIn);
+		m.mStarved = m.mLookups = 0;
+	}
+
 	static void Tick()
 	{
 		gH.mSimNow += kTickMs;
@@ -853,6 +870,7 @@ namespace Coop
 			if (gH.mBotMine)
 				gH.mBot[0].Think(*gH.mNetSide);
 			gH.mNetSide->Step(gH.mSimNow);
+			LogMirrorStats(*gH.mNetSide);
 		}
 	}
 

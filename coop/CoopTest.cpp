@@ -25,6 +25,7 @@
 #include "CoopRace.h"
 #include "CoopKeeper.h"
 #include "CoopHeroes.h"
+#include "CoopUI.h"
 #include <SDL.h>
 #include <SexyAppFramework/SexyAppBase.h>
 #include <SexyAppFramework/WidgetManager.h>
@@ -226,6 +227,8 @@ namespace Coop
 					std::filesystem::create_directories(std::filesystem::path(gRecordPrefix).parent_path(), ec);
 				}
 			}
+			else if (s.mVerb == "coopwindow")
+				OpenCoopDialog((Sexy::WinFishApp*)Sexy::gSexyAppBase);
 			else if (s.mVerb == "host")
 			{
 				std::string anErr;

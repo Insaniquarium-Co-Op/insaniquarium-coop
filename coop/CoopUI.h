@@ -68,6 +68,7 @@ namespace Coop
 		Sexy::EditWidget*	mAddressEdit;
 		std::vector<std::string> mLanAddresses;
 		std::vector<std::string> mLocalIps;
+		bool			mVpnSeen = false;
 		std::string		mMessage;
 		bool			mMessageIsError = false;
 		bool			mDiscoveryStarted = false;

@@ -8,18 +8,73 @@ namespace Heroes
 	///////////////////////////////////////////////////////////////////////////
 	// Mirror
 	///////////////////////////////////////////////////////////////////////////
-	void Mirror::AddArena(uint32_t theNow, const ArenaSnap& theSnap)
+	uint32_t Mirror::LocalTime(uint32_t theNow, int64_t theSentAt)
 	{
-		mArena.push_back({ theNow, theSnap });
-		while (mArena.size() > 4)
+		if (theSentAt < 0)
+			return theNow;
+		mStamped = true;
+		// The two clocks differ by an unknown amount: the least-delayed snapshot of the
+		// last few seconds sets it, and how much later the others came is their lateness.
+		int32_t anOffset = (int32_t)(theNow - (uint32_t)theSentAt);
+		mSamples.push_back({ theNow, anOffset });
+		while (!mSamples.empty() && (int32_t)(theNow - mSamples.front().mAt) > (int32_t)kWindowMs)
+			mSamples.pop_front();
+		int32_t aMin = anOffset, aMax = anOffset;
+		for (const Sample& s : mSamples)
+		{
+			aMin = std::min(aMin, s.mOffset);
+			aMax = std::max(aMax, s.mOffset);
+		}
+		mWorstLateMs = aMax - aMin;
+		return (uint32_t)theSentAt + (uint32_t)aMin;
+	}
+
+	uint32_t Mirror::TargetDelayMs() const
+	{
+		if (!mStamped)
+			return kUnstampedDelayMs;
+		float aTarget = mIntervalMs + (float)mWorstLateMs + (float)kMarginMs;
+		return (uint32_t)Clamp(aTarget, (float)kMinDelayMs, (float)kMaxDelayMs);
+	}
+
+	void Mirror::UpdateDelay()
+	{
+		// Grow quickly (a stall is worse than a little extra delay), shrink slowly.
+		uint32_t aTarget = TargetDelayMs();
+		if (aTarget > mDelayMs)
+			mDelayMs = std::min(aTarget, mDelayMs + 4);
+		else if (aTarget < mDelayMs)
+			mDelayMs = std::max(aTarget, mDelayMs - 1);
+	}
+
+	void Mirror::AddArena(uint32_t theNow, const ArenaSnap& theSnap, int64_t theSentAt)
+	{
+		uint32_t anAt = LocalTime(theNow, theSentAt);
+		if (!mArena.empty() && (int32_t)(anAt - mArena.back().mAt) <= 0)
+			anAt = mArena.back().mAt + 1;
+		mArena.push_back({ anAt, theSnap });
+		while (mArena.size() > 8)
 			mArena.pop_front();
 	}
 
-	void Mirror::AddHero(uint32_t theNow, const HeroSnap& theSnap)
+	void Mirror::AddHero(uint32_t theNow, const HeroSnap& theSnap, int64_t theSentAt)
 	{
+		if (theSentAt >= 0)
+		{
+			if (mLastHeroSentAt >= 0)
+			{
+				int32_t aGap = (int32_t)((uint32_t)theSentAt - (uint32_t)mLastHeroSentAt);
+				if (aGap > 0 && aGap < 500)
+					mIntervalMs = mIntervalMs * 0.9f + aGap * 0.1f;
+			}
+			mLastHeroSentAt = theSentAt;
+		}
+		uint32_t anAt = LocalTime(theNow, theSentAt);
 		std::deque<TimedHero>& q = mHero[theSnap.mPlayer % kMaxPlayers];
-		q.push_back({ theNow, theSnap });
-		while (q.size() > 6)
+		if (!q.empty() && (int32_t)(anAt - q.back().mAt) <= 0)
+			anAt = q.back().mAt + 1;
+		q.push_back({ anAt, theSnap });
+		while (q.size() > 12)
 			q.pop_front();
 	}
 
@@ -72,6 +127,9 @@ namespace Heroes
 		const std::deque<TimedHero>& q = mHero[thePlayer % kMaxPlayers];
 		if (q.empty())
 			return false;
+		mLookups++;
+		if ((int32_t)(theTime - q.back().mAt) > 0)
+			mStarved++;
 		size_t b = q.size() - 1;
 		while (b > 0 && (int32_t)(q[b - 1].mAt - theTime) >= 0)
 			b--;
@@ -179,6 +237,7 @@ namespace Heroes
 		Packet p;
 		while (mLink != nullptr && mLink->Receive(p))
 			Receive(p);
+		mOther.UpdateDelay();
 		for (size_t i = 0; i < mEffects.size();)
 			if (Elapsed(mNow, mEffects[i].mAt + 1500 + mEffects[i].mEvent.mMs))
 				mEffects.erase(mEffects.begin() + i);
@@ -331,19 +390,21 @@ namespace Heroes
 			mLink->Send(HM_EVENTS, w.mData);
 			mOutEvents.erase(mOutEvents.begin(), mOutEvents.begin() + n);
 		}
-		if (Elapsed(mNow, mLastHeroSent + 50))
+		// Every step, stamped with our clock (D34; older copies ignore the stamp).
 		{
 			mLastHeroSent = mNow;
 			Writer w;
 			Put(w, MySnap());
+			w.U32(mNow);
 			mLink->Send(HM_HERO, w.mData);
 		}
-		uint32_t aEvery = OtherHeroIn(mTeam) ? 66 : 333;
+		uint32_t aEvery = OtherHeroIn(mTeam) ? 0 : 333;
 		if (Elapsed(mNow, mLastArenaSent + aEvery))
 		{
 			mLastArenaSent = mNow;
 			Writer w;
 			Put(w, mArena.Snapshot());
+			w.U32(mNow);
 			mLink->Send(HM_ARENA, w.mData);
 		}
 	}
@@ -357,14 +418,20 @@ namespace Heroes
 		{
 			HeroSnap s;
 			if (Get(r, s) && s.mPlayer != mPlayer)
-				mOther.AddHero(mNow, s);
+			{
+				int64_t aSentAt = r.Done() ? -1 : (int64_t)r.U32();
+				mOther.AddHero(mNow, s, r.mBad ? -1 : aSentAt);
+			}
 			break;
 		}
 		case HM_ARENA:
 		{
 			ArenaSnap s;
 			if (Get(r, s) && s.mTeam != mTeam)
-				mOther.AddArena(mNow, s);
+			{
+				int64_t aSentAt = r.Done() ? -1 : (int64_t)r.U32();
+				mOther.AddArena(mNow, s, r.mBad ? -1 : aSentAt);
+			}
 			break;
 		}
 		case HM_HITS:
@@ -708,7 +775,7 @@ namespace Heroes
 		{
 			*theOut = *s;
 			HeroSnap aSmooth;
-			if (theAsDrawn && mOther.HeroAt(mOtherPlayer, mNow - Mirror::kDelayMs, aSmooth) && aSmooth.mArena == s->mArena)
+			if (theAsDrawn && mOther.HeroAt(mOtherPlayer, mNow - mOther.DelayMs(), aSmooth) && aSmooth.mArena == s->mArena)
 				theOut->mPos = aSmooth.mPos;
 		}
 		return true;
@@ -871,7 +938,7 @@ namespace Heroes
 	{
 		if (theArena == mTeam)
 			return mArena.Snapshot();
-		return mOther.ArenaAt(mNow - Mirror::kDelayMs);
+		return mOther.ArenaAt(mNow - mOther.DelayMs());
 	}
 
 	void Side::ViewHeroes(int theArena, std::vector<HeroSnap>& theOut) const

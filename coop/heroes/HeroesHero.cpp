@@ -334,8 +334,20 @@ namespace Heroes
 				return true;
 			};
 			Vec v = mSteer * aStep;
-			bool aMoved = TryMove(v) || TryMove(Vec(v.x, 0)) || TryMove(Vec(0, v.y));
-			bool aAtEdge = Dist(ClampToWater(h.mPos + v, d.mRadius), h.mPos + v) > 0.01f;	// turning gets around walls, not along the tank's edges
+			bool aStraight = TryMove(v);
+			bool aMoved = aStraight || TryMove(Vec(v.x, 0)) || TryMove(Vec(0, v.y));
+			bool aAtEdge = Dist(ClampToWater(aOld + v, d.mRadius), aOld + v) > 0.01f;	// turning gets around walls, not along the tank's edges
+			if (!aStraight && !aAtEdge && Elapsed(mNow, mLastBumpAt + 400))
+			{
+				// Ran into a wall: a sand puff on my own screen (never sent).
+				mLastBumpAt = mNow;
+				Event e;
+				e.mType = EV_BUMP;
+				e.mArena = (uint8_t)h.mArena;
+				e.mId = ++mEffectSeq;
+				e.mA = aOld + mSteer * (d.mRadius / std::max(0.01f, Len(mSteer)));
+				mEffects.push_back({ e, mNow, mEffectSeq });
+			}
 			for (int aTurn = 0; !aMoved && !aAtEdge && aTurn < 4; aTurn++)
 			{
 				float aSide = aTurn < 2 ? mSlideSide : -mSlideSide;

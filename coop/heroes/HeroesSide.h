@@ -30,10 +30,32 @@ namespace Heroes
 		struct TimedHero { uint32_t mAt; HeroSnap mSnap; };
 		std::deque<TimedArena>	mArena;
 		std::deque<TimedHero>	mHero[kMaxPlayers];
-		static const uint32_t	kDelayMs = 90;	// draw this far behind the latest
 
-		void			AddArena(uint32_t theNow, const ArenaSnap& theSnap);
-		void			AddHero(uint32_t theNow, const HeroSnap& theSnap);
+		// The screen draws the other side this far in the past so movement between
+		// snapshots is smooth (D34). Snapshots carry the sender's clock: the delay is one
+		// snapshot interval plus the worst lateness seen in the last few seconds, plus a
+		// margin. Senders before 2.2.1 don't stamp them: a fixed 90 ms then.
+		static const uint32_t	kUnstampedDelayMs = 90, kMinDelayMs = 30, kMaxDelayMs = 120, kMarginMs = 6;
+		static const uint32_t	kWindowMs = 3000;
+		uint32_t		DelayMs() const { return mDelayMs; }
+		uint32_t		TargetDelayMs() const;
+		void			UpdateDelay();		// once per step: move toward the target
+		// theSentAt < 0: not stamped. The snapshot's time on our clock is returned.
+		void			AddArena(uint32_t theNow, const ArenaSnap& theSnap, int64_t theSentAt = -1);
+		void			AddHero(uint32_t theNow, const HeroSnap& theSnap, int64_t theSentAt = -1);
+		// Diagnostics: lookups that ran past the newest hero snapshot (a stall on screen).
+		mutable uint32_t mLookups = 0, mStarved = 0;
+		int				mWorstLateMs = 0;
+		float			mIntervalMs = 28;
+
+	private:
+		uint32_t		LocalTime(uint32_t theNow, int64_t theSentAt);
+		struct Sample { uint32_t mAt; int32_t mOffset; };
+		std::deque<Sample> mSamples;	// receive time minus send time, last kWindowMs
+		bool			mStamped = false;
+		int64_t			mLastHeroSentAt = -1;
+		uint32_t		mDelayMs = kUnstampedDelayMs;
+	public:
 		bool			HasArena() const { return !mArena.empty(); }
 		const ArenaSnap* LatestArena() const { return mArena.empty() ? nullptr : &mArena.back().mSnap; }
 		const HeroSnap*	LatestHero(int thePlayer) const;
@@ -252,6 +274,7 @@ namespace Heroes
 
 		Vec			mSteer;
 		float		mSlideSide = 1;					// which way WASD slides around a wall
+		uint32_t	mLastBumpAt = 0;				// the last sand puff (EV_BUMP)
 		std::vector<std::pair<EntityRef, Hit>>	mOutHits;
 		std::vector<Reward>		mOutRewards;
 		std::vector<Event>		mOutEvents;

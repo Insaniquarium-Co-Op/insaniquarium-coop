@@ -29,7 +29,8 @@ race the guest leaves that view, plays its own board, and returns to it afterwar
 
 ## Wire protocol (`coop/CoopProtocol.h`, version 8)
 
-One TCP connection, port 24050. Every message: `[u32 length][u8 type][payload]`,
+One TCP connection, port 24050 (`TCP_NODELAY`; `Send` writes at once without blocking, and
+what doesn't fit goes out at the next `Poll`, D32). Every message: `[u32 length][u8 type][payload]`,
 little-endian. LAN discovery: UDP beacons on port 24051 with the magic `INSQCOOP`.
 
 | Type | Direction | Meaning |
@@ -47,9 +48,11 @@ little-endian. LAN discovery: UDP beacons on port 24051 with the magic `INSQCOOP
 | KEEPER_* 40-44 | see Alien Keeper | launch, power, cursor (hunt point), lair status, events (bounty, alien down, landed, clock) |
 | HEROES_* 45-49 | see Pet Heroes | setup (host opens the draft), pick (locked in), go (seed and heroes), data (the sides' messages), cancel |
 
-Bump `kProtocolVersion` whenever messages change; hosts reject other versions. The one
-exception so far: since 2.1, WELCOME ends with the host's version string, which older
-guests never read and newer guests treat as optional, so 2.0 and 2.1 still play together.
+Bump `kProtocolVersion` whenever messages change; hosts reject other versions. The
+exceptions so far add an optional field at the end that older copies never read: since
+2.1, WELCOME ends with the host's version string (2.0 and 2.1 still play together); since
+2.2.1, Pet Heroes' hero and tank snapshots end with the sender's clock (D34; without it
+the other side is drawn a fixed 90 ms behind, as before).
 
 ### Versions and the update check (`coop/CoopUpdate.*`)
 
@@ -99,7 +102,7 @@ code who is acting. Holds (feed/fire) are tracked per player in `Board::CoopUpda
 |---|---|
 | `gDrawRecorder` | capturing drawing primitives (co-op stream) |
 | `gAudioHook` | mirroring sound and music |
-| `gAppHook` (`PreUpdateFrames`, `PreDrawScreen`, `PostDrawScreen`, `AllowLostFocusPause`, `KeepRunningWhenMinimized`) | session polling, frame capture, overlays, not pausing while someone else plays |
+| `gAppHook` (`PreUpdateFrames`, `PreDrawScreen`, `PostDrawScreen`, `AllowLostFocusPause`, `KeepRunningWhenMinimized`, `IdleWait`) | session polling, frame capture, overlays, not pausing while someone else plays; `IdleWait` replaces the sleep between updates while connected, so messages are handled and frames drawn as they arrive (D33) |
 | `gImageDestroyedHook` | freeing streamed images |
 | `gRemoteDispatch`, `gRemoteCursor` | input from player 2, and the cursor shape they should see |
 | `gUpdatingWidget` | which widget's `Update()` is running (who spawned a coin or a baby fish) |
@@ -224,7 +227,9 @@ nothing. The commands are listed in `coop/CoopTest.cpp`.
 
 - Log: `coop_log.txt` in the save folder (also printed with `INSANIQ_COOPLOG=1`).
 - Environment: `INSANIQ_RESDIR` (game files), `INSANIQ_TESTSCRIPT`, `INSANIQ_COOPLOG`,
-  `INSANIQ_COOPSTATS` (stream statistics), `INSANIQ_NO_UPNP`, `INSANIQ_TEST_HASHDROP=<n>`
+  `INSANIQ_COOPSTATS` (stream statistics: `Stream:` from the sender, `Recv:` every 2 s
+  from the receiver, `Heroes view:` in Pet Heroes matches), `INSANIQ_FAKE_VPN` (the host window's VPN note), `INSANIQ_NO_IDLEWAIT` (sleep between
+  updates as before D33), `INSANIQ_NO_UPNP`, `INSANIQ_TEST_HASHDROP=<n>`
   (guest pretends to lack every n-th image, forcing pixel fallback).
 - Command line: `-windowed`, `-host`, `-join=<address>` (retries for 30 s),
   `-resdir=<folder>`, `-savedir=<folder>`.
